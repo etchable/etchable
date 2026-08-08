@@ -58,6 +58,38 @@ Plain verbs, sentence case, conversational but specific. Buttons say what they d
 - **Chips**: rounded-full white pills with `grid` borders (auth toggle, session greeting) — the page's "toolbar" register.
 - **Focus**: 2px sky outline, 2px offset, on `:focus-visible` globally.
 
+## App chrome (desktop)
+
+Studied from Pencil.app and Figma's UI3 (token-level extraction of both);
+adapted to our palette. The governing idea from both: **the canvas is the
+star — chrome is small, quiet, and floats on it or recedes beside it.**
+
+- **Surfaces**: the window ground is `chrome` (a warm paper tint one step
+  deeper than the canvas); interactive chrome lives on **white islands** —
+  small `rounded-lg` cards with a soft shadow *plus a 0.5px hairline ring*
+  (Figma's trick: elevation instead of borders, so panels look machined,
+  not outlined). Hairline dividers are ink at 6-8% alpha, never solid grey.
+- **Text hierarchy is alpha ink**, not grey hexes: primary `ink/92`,
+  secondary `ink/55`, faint `ink/35`. Composites correctly on any surface.
+- **Type runs tiny**: 11px is the chrome default (12px for chat prose),
+  500 weight for labels. Anything that is *data* — paths, values, counts,
+  the model name — is mono (unchanged rule: if it isn't data, it isn't
+  mono). Icons are Phosphor (phosphoricons.com) via `@etchable/ui`'s
+  `Icon*` wrappers — 14px default, regular weight (bold at ≤12px, fill for
+  Stop). Never emoji, never unicode glyph characters.
+- **Buttons are ghost-first**: borderless, hover = ink wash (`ink/5`).
+  The one solid button per surface is copper (our rule beats Pencil's
+  monochrome CTA: copper is where the user acts). Controls are ~28px tall.
+- **Radii**: 6 / 8 / 10 / 14 — chips and fields at 6-8, islands at 10,
+  floating cards at 14. Pills only for status/identity chips.
+- **Tabs are a segmented control** (Pencil-style): an `ink/5` well with the
+  active segment raised on white + hairline ring.
+- **Motion**: 100-150ms ease-out on background/color only. Panels are
+  docked, not floating (Figma's UI3 lesson: canvas-first means recessive
+  chrome, not floating chrome that crowds small screens).
+- **Sky stays selection-only** — also in chrome: focus rings, the selection
+  chip, selection context. Never decoration.
+
 ## App icon
 
-Navy squircle, copper PCB traces converging on a chip. The icon is the only place the brand goes dark-navy-dominant; the web canvas stays paper. Favicon and desktop icons derive from the same source image.
+A lowercase "e" routed like a copper trace — 45° corners, one continuous stroke, ending in a via — on the navy squircle substrate with a whispered dot grid. The icon is the only place the brand goes dark-navy-dominant; the web canvas stays paper. Source of truth is `packages/ui/icon.svg`; desktop icons and favicons derive from it.

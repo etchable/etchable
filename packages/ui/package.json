@@ -14,5 +14,8 @@
   },
   "devDependencies": {
     "@types/react": "^19.1.8"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10"
   }
 }

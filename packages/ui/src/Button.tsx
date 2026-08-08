@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes } from "react";
 
-export type ButtonVariant = "copper" | "ink" | "quiet";
+export type ButtonVariant = "copper" | "ink" | "quiet" | "ghost";
 export type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT: Record<ButtonVariant, string> = {
@@ -13,6 +13,9 @@ const VARIANT: Record<ButtonVariant, string> = {
     "active:translate-y-0 active:shadow-[0_2px_0_var(--color-copper-deep)]",
   ink: "bg-ink font-bold text-white hover:bg-ink/85",
   quiet: "border border-grid bg-white font-medium text-ink shadow-sm hover:border-sky",
+  // Chrome register: borderless, hover = ink wash. Ghost-first surfaces
+  // keep copper for the one real action.
+  ghost: "font-medium text-ink-soft hover:bg-ink/5 hover:text-ink",
 };
 
 const SIZE: Record<ButtonSize, string> = {
@@ -47,7 +50,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`rounded-full whitespace-nowrap transition disabled:pointer-events-none disabled:opacity-50 ${VARIANT[variant]} ${SIZE[size]} ${tone ? TONE[tone] : ""} ${className ?? ""}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-full whitespace-nowrap transition disabled:pointer-events-none disabled:opacity-50 ${VARIANT[variant]} ${SIZE[size]} ${tone ? TONE[tone] : ""} ${className ?? ""}`}
       {...rest}
     />
   );

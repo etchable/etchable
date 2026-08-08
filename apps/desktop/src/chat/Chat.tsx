@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Spinner } from "@etchable/ui";
+import {
+  Button,
+  IconChevronDown,
+  IconChevronRight,
+  IconCrosshair,
+  IconPlus,
+  IconStop,
+  IconX,
+  Spinner,
+} from "@etchable/ui";
 import type { SessionInfo } from "../state";
 import {
   formatResultFooter,
@@ -29,21 +38,39 @@ function ToolRow({ item }: { item: ToolItem }) {
   const [open, setOpen] = useState(false);
   const isMcp = item.name.startsWith(MCP_PREFIX);
   const displayName = isMcp ? item.name.slice(MCP_PREFIX.length) : item.name;
+  const codeBlock =
+    "m-0 max-h-[200px] select-text overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-white px-2 py-1.5 font-mono text-[10px] shadow-[inset_0_0_0_0.5px_rgba(35,43,63,0.05)]";
   return (
-    <div className="tool-row">
-      <button type="button" className="tool-head" onClick={() => setOpen(!open)}>
-        <span className="tool-caret">{open ? "▾" : "▸"}</span>
-        <span className="tool-name">{displayName}</span>
-        {isMcp && <span className="tag-canvas">canvas</span>}
-        <span className="tool-preview">{previewInput(item.input)}</span>
+    <div className="overflow-hidden rounded-lg bg-elev">
+      <button
+        type="button"
+        className="flex w-full min-w-0 cursor-pointer items-center gap-[7px] px-2 py-[5px] text-left text-xxs transition-colors hover:bg-ink/4"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="flex flex-none text-ink/35">
+          {open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
+        </span>
+        <span className="flex-none font-mono font-semibold">{displayName}</span>
+        {isMcp && (
+          <span className="flex-none rounded-full border border-sky/40 px-[5px] font-mono text-[9px] text-sky">
+            canvas
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink/35">
+          {previewInput(item.input)}
+        </span>
         {!item.result && <Spinner />}
-        {item.result?.isError && <span className="tool-err-mark">✗</span>}
+        {item.result?.isError && (
+          <span className="flex flex-none text-alert">
+            <IconX size={11} />
+          </span>
+        )}
       </button>
       {open && (
-        <div className="tool-body">
-          <pre className="tool-json">{prettyJson(item.input)}</pre>
+        <div className="flex flex-col gap-1.5 border-t border-ink/5 px-2 py-[7px]">
+          <pre className={`${codeBlock} text-ink/55`}>{prettyJson(item.input)}</pre>
           {item.result && (
-            <pre className={"tool-result" + (item.result.isError ? " is-error" : "")}>
+            <pre className={`${codeBlock} ${item.result.isError ? "text-alert" : "text-ink/92"}`}>
               {item.result.content || "(empty result)"}
             </pre>
           )}
@@ -62,12 +89,14 @@ function PermissionCard({
 }) {
   const answered = item.verdict !== undefined;
   return (
-    <div className="perm-card">
-      <div className="perm-title">
-        Claude wants to use <strong>{item.toolName}</strong>
+    <div className="flex flex-col gap-[7px] rounded-[10px] bg-warn/5 px-2.5 py-2 ring-1 ring-warn/35">
+      <div className="text-xs">
+        Claude wants to use <strong className="font-mono">{item.toolName}</strong>
       </div>
-      <pre className="tool-json">{prettyJson(item.input)}</pre>
-      <div className="perm-actions">
+      <pre className="m-0 max-h-[200px] select-text overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md bg-white px-2 py-1.5 font-mono text-[10px] text-ink/55 shadow-[inset_0_0_0_0.5px_rgba(35,43,63,0.05)]">
+        {prettyJson(item.input)}
+      </pre>
+      <div className="flex items-center gap-2">
         <Button
           size="sm"
           tone="success"
@@ -85,7 +114,12 @@ function PermissionCard({
           Deny
         </Button>
         {answered && (
-          <span className={"perm-verdict " + (item.verdict === "allowed" ? "ok" : "no")}>
+          <span
+            className={
+              "font-mono text-[10.5px] " +
+              (item.verdict === "allowed" ? "text-leaf-deep" : "text-alert")
+            }
+          >
             {item.verdict === "allowed" ? "Allowed" : "Denied"}
           </span>
         )}
@@ -98,14 +132,16 @@ function renderItem(item: ChatItem, onRespond: (id: string, allow: boolean) => v
   switch (item.kind) {
     case "user":
       return (
-        <div key={item.id} className="msg-row right">
-          <div className="bubble user">{item.text}</div>
+        <div key={item.id} className="flex justify-end">
+          <div className="max-w-[85%] select-text whitespace-pre-wrap wrap-anywhere rounded-xl rounded-br-[4px] border border-copper/25 bg-copper/8 px-2.5 py-[7px] text-xs">
+            {item.text}
+          </div>
         </div>
       );
     case "agent":
       return (
-        <div key={item.id} className="msg-row">
-          <div className={"agent-text" + (item.streaming ? " streaming" : "")}>
+        <div key={item.id} className="flex">
+          <div className="max-w-[95%] select-text whitespace-pre-wrap wrap-anywhere text-xs">
             {item.text}
             {item.streaming && <span className="caret-blink">▍</span>}
           </div>
@@ -117,19 +153,26 @@ function renderItem(item: ChatItem, onRespond: (id: string, allow: boolean) => v
       return <PermissionCard key={item.id} item={item} onRespond={onRespond} />;
     case "system":
       return (
-        <div key={item.id} className={"sys-row" + (item.isError ? " is-error" : "")}>
+        <div
+          key={item.id}
+          className={
+            "select-text whitespace-pre-wrap wrap-anywhere rounded-r-md border-l-2 px-2.5 py-1.5 font-mono text-[10.5px] " +
+            (item.isError
+              ? "border-alert bg-alert/5 text-alert"
+              : "border-ink/8 bg-elev text-ink/55")
+          }
+        >
           {item.text}
         </div>
       );
     case "result": {
       const meta = formatResultFooter(item);
       return (
-        <div key={item.id} className="result-row">
-          {item.isError ? (
-            <span className="result-err">{item.subtype}</span>
-          ) : (
-            <span>{meta || "done"}</span>
-          )}
+        <div
+          key={item.id}
+          className="border-b border-ink/5 pb-1.5 pt-0.5 font-mono text-[10px] text-ink/35"
+        >
+          {item.isError ? <span className="text-alert">{item.subtype}</span> : <span>{meta || "done"}</span>}
           {item.isError && meta && <span> · {meta}</span>}
         </div>
       );
@@ -179,36 +222,43 @@ export default function Chat(props: ChatProps) {
   })();
 
   return (
-    <div className="chat">
-      <div className="chat-list" ref={listRef} onScroll={handleScroll}>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        className="scroll-minimal flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-1.5 pt-3"
+        ref={listRef}
+        onScroll={handleScroll}
+      >
         {transcript.length === 0 && (
-          <div className="chat-placeholder">
+          <div className="m-auto max-w-[260px] text-center text-xs text-ink/35">
             Ask about the board — Claude can read the schematic and edit the source.
           </div>
         )}
         {transcript.map((item) => renderItem(item, onRespondPermission))}
       </div>
 
-      <div className="composer">
+      <div className="mx-2.5 mb-2.5 mt-1.5 flex flex-none flex-col gap-[7px] rounded-[14px] bg-white p-2 shadow-island">
         {selection.length > 0 && (
-          <div className="ctx-chip">
-            <span className="ctx-chip-text">
-              📌 {selection.length} selected — included as context
-              <span className="ctx-chip-paths"> · {selPreview}</span>
+          <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-sky/40 bg-sky/10 px-2.5 py-1 text-xxs">
+            <span className="flex flex-none text-sky">
+              <IconCrosshair size={12} />
+            </span>
+            <span className="min-w-0 flex-1 truncate">
+              {selection.length} selected — included as context
+              <span className="font-mono text-[10px] text-ink/55"> · {selPreview}</span>
             </span>
             <button
               type="button"
-              className="ctx-chip-x"
+              className="flex flex-none cursor-pointer text-ink/55 hover:text-ink/92"
               title="Clear selection"
               onClick={onClearSelection}
             >
-              ×
+              <IconX size={11} />
             </button>
           </div>
         )}
-        <div className="composer-main">
+        <div className="flex items-end gap-2">
           <textarea
-            className="composer-input"
+            className="flex-1 select-text resize-none px-1 py-1 text-xs leading-relaxed outline-none placeholder:text-ink/35"
             placeholder="Message Claude…"
             value={draft}
             rows={3}
@@ -229,23 +279,29 @@ export default function Chat(props: ChatProps) {
             Send
           </Button>
         </div>
-        <div className="composer-foot">
+        <div className="flex min-h-[22px] items-center gap-2">
           {agentRunning ? (
             <Button size="sm" tone="danger" onClick={onInterrupt}>
-              ■ Stop
+              <IconStop size={10} />
+              Stop
             </Button>
           ) : (
-            <span className="composer-hint">Enter to send · Shift+Enter for newline</span>
+            <span className="text-[10px] text-ink/35">
+              Enter to send · Shift+Enter for newline
+            </span>
           )}
-          <span className="composer-spacer" />
-          {sessionInfo?.model && <span className="composer-model">{sessionInfo.model}</span>}
+          <span className="flex-1" />
+          {sessionInfo?.model && (
+            <span className="font-mono text-[9.5px] text-ink/35">{sessionInfo.model}</span>
+          )}
           <Button
+            variant="ghost"
             size="sm"
-            className="px-2.5 text-sm leading-tight"
+            className="px-2"
             title="New session"
             onClick={onNewSession}
           >
-            ⊕
+            <IconPlus size={13} />
           </Button>
         </div>
       </div>

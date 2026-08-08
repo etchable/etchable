@@ -140,8 +140,7 @@ function AuthChip({
     return (
       <Chip className="py-1.5 pr-3 pl-4 text-sm">
         <span>
-          Hey, <span className="font-bold">{session.user.name}</span>{" "}
-          <span aria-hidden>✏️</span>
+          Hey, <span className="font-bold">{session.user.name}</span>
         </span>
         <button
           onClick={() => authClient.signOut()}

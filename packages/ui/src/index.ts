@@ -5,3 +5,13 @@ export { Chip } from "./Chip";
 export { Panel } from "./Panel";
 export { SelectionBox } from "./SelectionBox";
 export { Cursor } from "./Cursor";
+export {
+  IconCheck,
+  IconChevronDown,
+  IconChevronRight,
+  IconCrosshair,
+  IconPlus,
+  IconStop,
+  IconWarning,
+  IconX,
+} from "./icons";
