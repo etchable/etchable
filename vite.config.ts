@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -8,7 +9,7 @@ const host = process.env.TAURI_DEV_HOST;
 // crates/desktop. Run `npm run tauri dev` from the repo root.
 export default defineConfig(async () => ({
   root: "ui",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
 
   clearScreen: false,
   server: {

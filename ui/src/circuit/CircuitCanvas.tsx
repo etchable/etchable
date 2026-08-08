@@ -18,9 +18,9 @@ import type { BuildView, Diag } from "../types";
 // our pin), so target its actual prop type rather than either package's.
 type ViewerCircuitJson = ComponentProps<typeof SchematicViewer>["circuitJson"];
 
-const ACCENT = "#7aa2ff";
-const ERROR = "#f87171";
-const WARNING = "#fbbf24";
+const ACCENT = "#4d9fff";
+const ERROR = "#d64545";
+const WARNING = "#c9950c";
 
 type CircuitCanvasProps = {
   view: BuildView | null;
@@ -202,21 +202,21 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
           }}
           colorOverrides={{
             schematic: {
-              background: "#0e1116",
-              grid: "#1a212c",
-              component_outline: "#c7d0dc",
-              component_body: "#151a22",
-              reference: "#c7d0dc",
-              value: "#8b95a3",
-              pin: "#8b95a3",
-              pin_name: "#8b95a3",
-              pin_number: "#5a6472",
-              label_local: "#e8eaf0",
-              label_global: "#7aa2ff",
-              label_background: "rgba(21, 26, 34, 0.85)",
-              net_name: "#8b95a3",
-              wire: "#5c9866",
-              junction: "#5c9866",
+              background: "transparent",
+              grid: "#e6e4dd",
+              component_outline: "#232b3f",
+              component_body: "#ffffff",
+              reference: "#232b3f",
+              value: "#6c7385",
+              pin: "#6c7385",
+              pin_name: "#6c7385",
+              pin_number: "#9aa0ae",
+              label_local: "#232b3f",
+              label_global: "#c1783c",
+              label_background: "rgba(251, 250, 247, 0.9)",
+              net_name: "#6c7385",
+              wire: "#c1783c",
+              junction: "#c1783c",
             },
           }}
           css={highlightCss}

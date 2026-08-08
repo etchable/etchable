@@ -1,22 +1,45 @@
-/* etchable — dark engineering-tool theme */
+/* etchable — paper-canvas theme (docs/design.md)
+   Palette: paper canvas, navy ink, copper where the user acts,
+   sky strictly for selection/focus. */
+
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #fbfaf7;
+  --color-ink: #232b3f;
+  --color-ink-soft: #6c7385;
+  --color-grid: #e6e4dd;
+  --color-copper: #c1783c;
+  --color-copper-deep: #9e5f27;
+  --color-sky: #4d9fff;
+  --color-leaf: #2fbf71;
+  --color-alert: #d64545;
+
+  --font-display: "Bricolage Grotesque", "Karla", sans-serif;
+  --font-sans: "Karla", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
 
 :root {
-  --bg: #0e1116;
-  --bg-panel: #11151c;
-  --bg-elev: #161b23;
-  --bg-input: #0b0e13;
-  --line: #232a35;
-  --line-soft: #1b212b;
-  --text: #d6dde6;
-  --dim: #8b95a3;
-  --faint: #5a6472;
-  --accent: #7aa2ff;
-  --accent-dim: rgba(122, 162, 255, 0.14);
-  --green: #4ade80;
-  --amber: #fbbf24;
-  --red: #f87171;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --bg: var(--color-canvas);
+  --bg-panel: #ffffff;
+  --bg-elev: #f6f4ef;
+  --bg-input: #ffffff;
+  --line: var(--color-grid);
+  --line-soft: #eeece5;
+  --text: var(--color-ink);
+  --dim: var(--color-ink-soft);
+  --faint: #9aa0ae;
+  --accent: var(--color-sky);
+  --accent-dim: rgba(77, 159, 255, 0.1);
+  --copper: var(--color-copper);
+  --copper-deep: var(--color-copper-deep);
+  --green: var(--color-leaf);
+  --amber: #c9950c;
+  --red: var(--color-alert);
+  --mono: var(--font-mono);
+  --sans: var(--font-sans);
+  --display: var(--font-display);
 }
 
 * {
@@ -41,6 +64,11 @@ body {
   user-select: none;
 }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -51,20 +79,21 @@ body {
 
 .btn {
   appearance: none;
-  background: var(--bg-elev);
+  background: var(--bg-panel);
   color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  border: 1px solid rgba(35, 43, 63, 0.18);
+  border-radius: 999px;
   font: inherit;
   font-size: 12px;
-  padding: 4px 10px;
+  font-weight: 500;
+  padding: 4px 12px;
   cursor: pointer;
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
-  border-color: #3a4454;
-  background: #1a212b;
+  border-color: rgba(35, 43, 63, 0.35);
+  background: var(--bg-elev);
 }
 
 .btn:disabled {
@@ -73,23 +102,29 @@ body {
 }
 
 .btn-primary {
-  background: var(--accent-dim);
-  border-color: rgba(122, 162, 255, 0.45);
-  color: var(--accent);
+  background: var(--copper);
+  border-color: var(--copper-deep);
+  color: #fff;
+  box-shadow: 0 2px 0 var(--copper-deep);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: rgba(122, 162, 255, 0.22);
-  border-color: var(--accent);
+  background: #b06c31;
+  border-color: var(--copper-deep);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 var(--copper-deep);
 }
 
 .btn-lg {
   font-size: 13px;
-  padding: 8px 18px;
+  padding: 8px 20px;
 }
 
 .btn-icon {
-  padding: 2px 8px;
+  padding: 2px 10px;
   font-size: 14px;
   line-height: 1.2;
 }
@@ -97,19 +132,23 @@ body {
 .path-input,
 .composer-input {
   background: var(--bg-input);
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  border: 2px solid rgba(35, 43, 63, 0.15);
+  border-radius: 12px;
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
-  padding: 6px 8px;
+  padding: 5px 10px;
   outline: none;
   user-select: text;
 }
 
+.path-input {
+  border-radius: 999px;
+}
+
 .path-input:focus,
 .composer-input:focus {
-  border-color: rgba(122, 162, 255, 0.6);
+  border-color: var(--accent);
 }
 
 /* ---------- toolbar ---------- */
@@ -118,7 +157,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 38px;
+  height: 40px;
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-panel);
@@ -126,11 +165,11 @@ body {
 }
 
 .brand {
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--accent);
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .board-path {
@@ -157,19 +196,20 @@ body {
   padding: 2px 10px;
   border-radius: 99px;
   border: 1px solid var(--line);
+  background: var(--bg-panel);
   white-space: nowrap;
 }
 
 .pill-ok {
-  color: var(--green);
-  border-color: rgba(74, 222, 128, 0.35);
-  background: rgba(74, 222, 128, 0.07);
+  color: #1f8f53;
+  border-color: rgba(47, 191, 113, 0.4);
+  background: rgba(47, 191, 113, 0.08);
 }
 
 .pill-err {
   color: var(--red);
-  border-color: rgba(248, 113, 113, 0.4);
-  background: rgba(248, 113, 113, 0.08);
+  border-color: rgba(214, 69, 69, 0.4);
+  background: rgba(214, 69, 69, 0.07);
 }
 
 .pill-building {
@@ -181,8 +221,8 @@ body {
   height: 10px;
   flex: none;
   border-radius: 50%;
-  border: 1.5px solid var(--faint);
-  border-top-color: var(--accent);
+  border: 1.5px solid var(--line);
+  border-top-color: var(--copper);
   animation: spin 0.8s linear infinite;
   display: inline-block;
 }
@@ -199,8 +239,8 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--red);
-  background: rgba(248, 113, 113, 0.08);
-  border-bottom: 1px solid rgba(248, 113, 113, 0.3);
+  background: rgba(214, 69, 69, 0.07);
+  border-bottom: 1px solid rgba(214, 69, 69, 0.3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -250,6 +290,7 @@ body {
   color: var(--dim);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   padding: 8px 14px 6px;
   cursor: pointer;
   display: inline-flex;
@@ -263,7 +304,7 @@ body {
 
 .tab.active {
   color: var(--text);
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--text);
 }
 
 .tab-badge {
@@ -271,12 +312,12 @@ body {
   font-size: 10px;
   padding: 0 6px;
   border-radius: 99px;
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--amber);
+  background: rgba(201, 149, 12, 0.14);
+  color: #94700e;
 }
 
 .tab-badge.has-err {
-  background: rgba(248, 113, 113, 0.15);
+  background: rgba(214, 69, 69, 0.12);
   color: var(--red);
 }
 
@@ -294,6 +335,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  background-image: radial-gradient(circle, var(--line) 1.5px, transparent 1.5px);
+  background-size: 26px 26px;
 }
 
 .empty-card {
@@ -303,17 +346,18 @@ body {
   gap: 14px;
   padding: 36px 44px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 16px;
   background: var(--bg-panel);
+  box-shadow: 0 8px 24px rgba(35, 43, 63, 0.06);
   max-width: 460px;
 }
 
 .empty-title {
-  font-family: var(--mono);
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.05em;
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .empty-sub {
@@ -330,7 +374,7 @@ body {
 .empty-hint code {
   font-family: var(--mono);
   color: var(--dim);
-  background: var(--bg-input);
+  background: var(--bg-elev);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -362,7 +406,7 @@ body {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(circle, #1b212b 1px, transparent 1px) 0 0 / 28px 28px,
+    radial-gradient(circle, var(--line) 1.5px, transparent 1.5px) 0 0 / 26px 26px,
     var(--bg);
 }
 
@@ -425,7 +469,7 @@ body {
   font-family: var(--mono);
   font-size: 8.5px;
   font-weight: 700;
-  fill: #0e1116;
+  fill: #fff;
 }
 
 .diag-badge {
@@ -438,12 +482,13 @@ body {
   left: 50%;
   transform: translateX(-50%);
   padding: 5px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(248, 113, 113, 0.5);
-  background: rgba(40, 14, 14, 0.92);
+  border-radius: 999px;
+  border: 1px solid rgba(214, 69, 69, 0.4);
+  background: var(--bg-panel);
   color: var(--red);
   font-family: var(--mono);
   font-size: 11px;
+  box-shadow: 0 4px 12px rgba(35, 43, 63, 0.08);
   pointer-events: none;
 }
 
@@ -452,12 +497,13 @@ body {
   left: 12px;
   bottom: 12px;
   max-width: 60%;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(122, 162, 255, 0.4);
-  background: rgba(14, 17, 22, 0.9);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(77, 159, 255, 0.5);
+  background: var(--bg-panel);
   font-family: var(--mono);
   font-size: 10.5px;
+  box-shadow: 0 2px 8px rgba(35, 43, 63, 0.08);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -478,14 +524,14 @@ body {
   z-index: 10;
   max-width: 340px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--line);
-  background: #1a1f28;
+  background: var(--bg-panel);
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text);
   pointer-events: none;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(35, 43, 63, 0.12);
 }
 
 .canvas-tooltip div + div {
@@ -527,12 +573,13 @@ body {
   justify-content: flex-end;
 }
 
+/* You act, so your bubble is copper (the landing's "you?" cursor). */
 .bubble.user {
   max-width: 85%;
   padding: 7px 11px;
-  border-radius: 10px 10px 3px 10px;
-  background: var(--accent-dim);
-  border: 1px solid rgba(122, 162, 255, 0.3);
+  border-radius: 12px 12px 4px 12px;
+  background: rgba(193, 120, 60, 0.08);
+  border: 1px solid rgba(193, 120, 60, 0.3);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
@@ -547,7 +594,7 @@ body {
 }
 
 .caret-blink {
-  color: var(--accent);
+  color: var(--copper);
   animation: blink 1s steps(2) infinite;
 }
 
@@ -564,7 +611,7 @@ body {
   padding: 6px 10px;
   border-left: 2px solid var(--line);
   background: var(--bg-elev);
-  border-radius: 0 5px 5px 0;
+  border-radius: 0 6px 6px 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
@@ -573,7 +620,7 @@ body {
 .sys-row.is-error {
   color: var(--red);
   border-left-color: var(--red);
-  background: rgba(248, 113, 113, 0.06);
+  background: rgba(214, 69, 69, 0.06);
 }
 
 .result-row {
@@ -591,9 +638,9 @@ body {
 /* tool rows */
 
 .tool-row {
-  border: 1px solid var(--line-soft);
-  border-radius: 6px;
-  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-panel);
   overflow: hidden;
 }
 
@@ -631,9 +678,9 @@ body {
   font-family: var(--mono);
   font-size: 9px;
   color: var(--accent);
-  border: 1px solid rgba(122, 162, 255, 0.4);
-  border-radius: 4px;
-  padding: 0 4px;
+  border: 1px solid rgba(77, 159, 255, 0.45);
+  border-radius: 99px;
+  padding: 0 5px;
 }
 
 .tool-preview {
@@ -674,9 +721,9 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--dim);
-  background: var(--bg-input);
+  background: var(--bg-elev);
   border: 1px solid var(--line-soft);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 6px 8px;
   max-height: 200px;
   overflow: auto;
@@ -689,15 +736,15 @@ body {
 
 .tool-result.is-error {
   color: var(--red);
-  border-color: rgba(248, 113, 113, 0.35);
+  border-color: rgba(214, 69, 69, 0.35);
 }
 
 /* permission card */
 
 .perm-card {
-  border: 1px solid rgba(251, 191, 36, 0.4);
-  border-radius: 6px;
-  background: rgba(251, 191, 36, 0.05);
+  border: 1px solid rgba(201, 149, 12, 0.45);
+  border-radius: 8px;
+  background: rgba(201, 149, 12, 0.05);
   padding: 9px 11px;
   display: flex;
   flex-direction: column;
@@ -719,13 +766,13 @@ body {
 }
 
 .btn-allow {
-  color: var(--green);
-  border-color: rgba(74, 222, 128, 0.4);
+  color: #1f8f53;
+  border-color: rgba(47, 191, 113, 0.5);
 }
 
 .btn-deny {
   color: var(--red);
-  border-color: rgba(248, 113, 113, 0.4);
+  border-color: rgba(214, 69, 69, 0.45);
 }
 
 .perm-verdict {
@@ -734,7 +781,7 @@ body {
 }
 
 .perm-verdict.ok {
-  color: var(--green);
+  color: #1f8f53;
 }
 
 .perm-verdict.no {
@@ -753,13 +800,14 @@ body {
   background: var(--bg-panel);
 }
 
+/* Selection-as-context is selection UI: sky. */
 .ctx-chip {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(122, 162, 255, 0.35);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(77, 159, 255, 0.45);
   background: var(--accent-dim);
   font-size: 11px;
   min-width: 0;
@@ -829,7 +877,7 @@ body {
 
 .btn-stop {
   color: var(--red);
-  border-color: rgba(248, 113, 113, 0.4);
+  border-color: rgba(214, 69, 69, 0.45);
   font-size: 11px;
 }
 
@@ -870,7 +918,7 @@ body {
 }
 
 .diag-group-title.sev-warning {
-  color: var(--amber);
+  color: #94700e;
 }
 
 .diag-row {
@@ -885,7 +933,7 @@ body {
   font-size: 12px;
   text-align: left;
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
   width: 100%;
 }
@@ -906,7 +954,7 @@ body {
 }
 
 .diag-row.sev-warning .diag-icon {
-  color: var(--amber);
+  color: #94700e;
 }
 
 .diag-row.sev-advice .diag-icon {
