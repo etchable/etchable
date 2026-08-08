@@ -31,12 +31,21 @@ struct Args {
     /// Disable network access (use only cached/vendored dependencies)
     #[arg(long)]
     offline: bool,
+
+    /// Explicit stdlib source directory (bypasses exe-ancestor discovery;
+    /// this is how the packaged app finds its bundled stdlib)
+    #[arg(long)]
+    stdlib: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
 
-    let workspace = match Workspace::open(&args.path, args.offline) {
+    let opts = zen_build::OpenOptions {
+        offline: args.offline,
+        stdlib_source: args.stdlib.clone(),
+    };
+    let workspace = match Workspace::open_with(&args.path, &opts) {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("error: {e:#}");

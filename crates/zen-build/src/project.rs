@@ -59,6 +59,15 @@ pub struct ComponentCard {
     pub zen_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// `[provenance]` — where generated assets came from (source, fetch
+    /// time, uuids, `verified = false` until a human checks them against
+    /// the datasheet). Free-form by design.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub provenance: BTreeMap<String, JsonValue>,
+    /// `[assets]` — root-relative paths of vendored files (`model_3d`,
+    /// `symbol`, `footprint`, ...).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub assets: BTreeMap<String, String>,
     #[serde(flatten)]
     pub part: PartFields,
 }
@@ -266,6 +275,8 @@ fn load_card(root: &Path, name: &str, path: &Path, problems: &mut Vec<String>) -
         name: name.to_string(),
         zen_file: None,
         description: None,
+        provenance: BTreeMap::new(),
+        assets: BTreeMap::new(),
         part: PartFields::default(),
     };
 
@@ -280,7 +291,39 @@ fn load_card(root: &Path, name: &str, path: &Path, problems: &mut Vec<String>) -
         Err(e) => problems.push(format!("{ctx}: unreadable: {e}")),
         Ok(text) => match text.parse::<toml::Table>() {
             Err(e) => problems.push(format!("{ctx}: parse error: {e}")),
-            Ok(table) => {
+            Ok(mut table) => {
+                // `[provenance]` / `[assets]` are card-only tables; split
+                // them off before the shared field parser (which treats
+                // unknown keys as problems and also serves etch.toml
+                // overrides, where these tables have no meaning).
+                if let Some(prov) = table.remove("provenance") {
+                    match prov.as_table() {
+                        Some(t) => {
+                            card.provenance = t
+                                .iter()
+                                .map(|(k, v)| (k.clone(), toml_to_json(v)))
+                                .collect();
+                        }
+                        None => problems.push(format!("{ctx}: `provenance` must be a table")),
+                    }
+                }
+                if let Some(assets) = table.remove("assets") {
+                    match assets.as_table() {
+                        Some(t) => {
+                            for (k, v) in t {
+                                match v.as_str() {
+                                    Some(path) => {
+                                        card.assets.insert(k.clone(), path.to_string());
+                                    }
+                                    None => problems.push(format!(
+                                        "{ctx}: assets.{k} must be a string path"
+                                    )),
+                                }
+                            }
+                        }
+                        None => problems.push(format!("{ctx}: `assets` must be a table")),
+                    }
+                }
                 let (fields, description) = parse_part_fields(&table, &ctx, problems);
                 card.part = fields;
                 card.description = description;
@@ -382,7 +425,7 @@ fn parse_vendor(
     }
 }
 
-fn lcsc_part_valid(part: &str) -> bool {
+pub(crate) fn lcsc_part_valid(part: &str) -> bool {
     part.len() > 1
         && part.starts_with('C')
         && part[1..].chars().all(|c| c.is_ascii_digit())
@@ -558,9 +601,22 @@ fn apply_fields(part: &mut ResolvedPart, fields: &PartFields, source: &str) {
 // Scaffolding
 // ---------------------------------------------------------------------------
 
+/// The outcome of scaffolding, so the UI can report a degraded-but-usable
+/// project (git unavailable) without the scaffold itself failing.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScaffoldResult {
+    pub root: PathBuf,
+    pub git_initialized: bool,
+}
+
 /// Create a new project directory under `parent`. Refuses to overwrite a
-/// non-empty target. `git init` is best-effort.
+/// non-empty target. Git init is pure-Rust (gix) — no PATH lookup — and
+/// best-effort: a project without a repo still works.
 pub fn scaffold_project(parent: &Path, name: &str) -> Result<PathBuf> {
+    scaffold_project_detailed(parent, name).map(|r| r.root)
+}
+
+pub fn scaffold_project_detailed(parent: &Path, name: &str) -> Result<ScaffoldResult> {
     if name.is_empty()
         || name.starts_with('.')
         || name.contains('/')
@@ -604,10 +660,18 @@ pub fn scaffold_project(parent: &Path, name: &str) -> Result<PathBuf> {
         std::fs::write(d.join(".gitkeep"), "")?;
     }
 
-    let _ = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status();
+    // Pure-Rust init: the app must not depend on a `git` binary being on
+    // PATH. Failure is non-fatal — the project is still usable.
+    let git_initialized = match gix::init(&root) {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("git init failed for {}: {e}", root.display());
+            false
+        }
+    };
 
-    Ok(root)
+    Ok(ScaffoldResult {
+        root,
+        git_initialized,
+    })
 }

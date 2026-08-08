@@ -90,14 +90,19 @@ pub async fn create_project(
     name: String,
 ) -> CmdResult<BuildSummary> {
     let parent = PathBuf::from(parent);
-    let root = {
+    let result = {
         let (parent, name) = (parent.clone(), name.clone());
-        tauri::async_runtime::spawn_blocking(move || zen_build::scaffold_project(&parent, &name))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| format!("{e:#}"))?
+        tauri::async_runtime::spawn_blocking(move || {
+            zen_build::scaffold_project_detailed(&parent, &name)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))?
     };
-    open_project(state, root.display().to_string()).await
+    if !result.git_initialized {
+        tracing::warn!("scaffolded {} without a git repo", result.root.display());
+    }
+    open_project(state, result.root.display().to_string()).await
 }
 
 /// Snapshot for (re)mounting UIs.

@@ -179,7 +179,7 @@ pub fn list_library(
         }
         let shown: Vec<String> = all.iter().take(MAX_PER_LIBRARY).cloned().collect();
         total += shown.len();
-        let truncated = (all.len() > shown.len()).then_some(all.len() - shown.len());
+        let truncated = (all.len() > shown.len()).then(|| all.len() - shown.len());
         out.kicad_symbols.push(SymbolLibraryInfo {
             library,
             symbols: shown,
@@ -206,7 +206,7 @@ pub fn list_library(
             continue;
         }
         let shown: Vec<String> = all.iter().take(MAX_PER_LIBRARY).cloned().collect();
-        let truncated = (all.len() > shown.len()).then_some(all.len() - shown.len());
+        let truncated = (all.len() > shown.len()).then(|| all.len() - shown.len());
         out.kicad_footprints.push(FootprintLibraryInfo {
             library,
             footprints: shown,
@@ -290,7 +290,7 @@ pub fn symbol_pins(path: &Path, symbol_name: Option<&str>) -> Result<SymbolPins>
         manufacturer: symbol.manufacturer.clone(),
         datasheet: symbol.datasheet.clone(),
         description: symbol.description.clone(),
-        truncated: (total > MAX_PINS).then_some(total - MAX_PINS),
+        truncated: (total > MAX_PINS).then(|| total - MAX_PINS),
     })
 }
 

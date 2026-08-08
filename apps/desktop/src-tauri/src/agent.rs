@@ -13,23 +13,71 @@ pub const AGENT_EVENT: &str = "agent-event";
 /// System-prompt suffix so the agent knows the environment it's embedded in.
 const SYSTEM_PROMPT_SUFFIX: &str = "\
 You are embedded in Etchable, a desktop schematic viewer for Zener (.zen) \
-hardware description files. The user sees a live canvas of the schematic that \
-rebuilds automatically whenever you edit .zen files — you never need to run a \
-build command manually, but the `build` MCP tool returns fresh diagnostics if \
-you want them. Use the `etchable` MCP tools (get_selection, get_schematic, \
-get_instance, query_nets, get_diagnostics, get_parts) to inspect the design \
-instead of parsing .zen files by hand; instance paths look like \
+hardware description files. The user sees a live canvas that rebuilds \
+automatically whenever you edit .zen files — never run build commands via \
+Bash; the `build` MCP tool forces a rebuild and returns fresh diagnostics. \
+Use the etchable MCP tools (get_selection, get_schematic, get_instance, \
+query_nets, get_diagnostics, get_parts, build) to inspect the design instead \
+of parsing .zen files by hand; instance paths look like \
 `root.SENSE_DIV.R1.R`. When the user says 'this' or 'the selected part', \
-call get_selection.\n\
-Etchable projects are directories marked by etch.toml. Conventions: reusable \
-building blocks live in components/<name>.zen with an optional part card \
-components/<name>.toml (description, mpn, manufacturer, datasheet, and \
-[vendors.lcsc] with part = \"C…\"); datasheets live at datasheets/<name>.pdf \
-and you can Read them directly when discussing a part. Part selections \
+call get_selection.\n\n\
+Projects are directories marked by etch.toml. Reusable blocks live in \
+components/<name>.zen with a part card components/<name>.toml (description, \
+mpn, manufacturer, datasheet, [vendors.lcsc] part = \"C…\"); vendored symbol \
+and footprint files live in components/<name>.assets/; datasheets live at \
+datasheets/<name>.pdf and you can Read them directly. Part selections \
 compose: etch.toml [parts.\"<instance-path>\"] overrides beat component \
 cards, which beat inline mpn/manufacturer attributes — get_parts shows the \
 resolved result with provenance. Keys in etch.toml are instance paths \
-without the root. prefix, never refdes.";
+without the root. prefix, never refdes.\n\n\
+SOURCING PARTS — follow this order:\n\
+1. Passives (R/C/L/LED/diode…): stdlib parametric generics via list_library, \
+ALWAYS with an LCSC part in the component card ([vendors.lcsc] part = \
+\"C…\") — otherwise house-part substitution happens silently.\n\
+2. Everything else comes from LCSC. search_parts queries the live JLCPCB \
+assembly catalog (stock, price, Basic/Extended class) alongside local \
+libraries. Prefer class=basic with healthy stock — extended parts carry a \
+JLC setup fee, and stock 0 is unbuildable.\n\
+3. get_lcsc_part BEFORE committing to a part: it shows lifecycle status, \
+MSL, price breaks, and whether usable CAD data exists (pin/pad counts are \
+the best early warning for a bad EasyEDA part).\n\
+4. add_lcsc_component is THE way to add a real part: it fetches and \
+converts the symbol, footprint, 3D model, and datasheet, vendors everything \
+into components/<name>.assets/, and writes the card with provenance. \
+Converted assets are UNVERIFIED — cross-check pin and pad counts against \
+the datasheet, relay every conversion warning to the user, and leave \
+provenance.verified alone until a human confirms.\n\
+5. add_component is an escape hatch for a user-supplied .kicad_sym already \
+on disk. Hand-author wrappers only when nothing else fits — and then \
+get_symbol_pins is the ONLY source of pin names and numbers. Never type pin \
+tables from a datasheet; Zener binds pins by NAME and unmapped pins are \
+hard errors.\n\
+NEVER fetch symbols, footprints, or 3D models via WebFetch or Bash — \
+add_lcsc_component is the only sanctioned pipeline for CAD assets. \
+Datasheets: fetch_datasheet (or add_lcsc_component's built-in), never curl. \
+jlcpcb.com / lcsc.com WebFetch is for READING product pages only. If LCSC \
+search is blocked or offline, the tools say so with a retry time — tell the \
+user and continue with local parts instead of probing.\n\n\
+WRAPPER RULES (when writing components by hand):\n\
+- io(Net) per exposed signal; map EVERY symbol pin in pins={…}; tie true \
+no-connects to NotConnected().\n\
+- symbol = Symbol(library = \"./<name>.assets/<name>.kicad_sym\") — paths are \
+relative to the .zen file and MUST start with ./ or ../; a bare path is read \
+as a package reference and fails.\n\
+- The symbol file is the authority for footprint and part identity when it \
+carries them; otherwise set footprint explicitly and give part = Part(mpn=…, \
+manufacturer=…), or the board fails the BOM check.\n\
+- Every passive gets an explicit mpn plus [vendors.lcsc] in its card — \
+otherwise house-part substitution happens silently. Verify LCSC C-numbers \
+against the value and prefer JLC Basic parts.\n\
+- io/Net/Ground/Power/Component/Module are prelude names — never load() them. \
+Preserve `# pcb:sch` comment blocks; they hold canvas positions.\n\
+- Deep syntax questions: call zener_reference for the authoritative guide.\n\n\
+CADENCE: work in small bursts — write one or a few components, then call \
+build and fix the diagnostics before continuing. After wiring nets, verify \
+with query_nets (check the critical nets end to end) and \
+query_nets{unconnected:true}. Before each burst of tool calls, say in one \
+short sentence what you are about to do and why.";
 
 pub async fn ensure_session(
     app: &AppHandle,
@@ -62,12 +110,26 @@ pub async fn ensure_session(
             cwd.display().to_string().trim_start_matches('/')
         )
     };
-    let allowed_tools = vec![
+    let mut allowed_tools = vec![
         "mcp__etchable".to_string(),
         scope("Read"),
         scope("Edit"),
         scope("Write"),
     ];
+    // The vendored stdlib is read-only reference material (generics,
+    // symbols, footprints) the agent should never have to ask about.
+    if let Some(stdlib) = state.canvas.read(|s| s.stdlib_dir.clone()) {
+        allowed_tools.push(format!(
+            "Read(//{}/**)",
+            stdlib.display().to_string().trim_start_matches('/')
+        ));
+    }
+    // Stock / Basic-vs-Extended checks are the one legitimate network habit
+    // in real board work. Everything else still prompts on purpose — that
+    // prompt is the guardrail against fetching symbols off the web.
+    for domain in ["jlcpcb.com", "www.jlcpcb.com", "lcsc.com", "www.lcsc.com"] {
+        allowed_tools.push(format!("WebFetch(domain:{domain})"));
+    }
 
     let config = agent_host::SpawnConfig {
         claude_bin: std::env::var("ETCHABLE_CLAUDE_BIN")

@@ -126,9 +126,9 @@ fn execute_electrical_check(
 }
 
 /// Discover the workspace containing `path` and resolve its dependencies.
-pub(crate) fn resolve(path: &Path, offline: bool) -> Result<ResolutionResult> {
+pub(crate) fn resolve(path: &Path, opts: &crate::OpenOptions) -> Result<ResolutionResult> {
     let file_provider = DefaultFileProvider::new();
-    let workspace_info = pcb_zen::get_workspace_info(&file_provider, path)
+    let mut workspace_info = pcb_zen::get_workspace_info(&file_provider, path)
         .with_context(|| format!("failed to discover workspace for {}", path.display()))?;
 
     if !workspace_info.errors.is_empty() {
@@ -139,7 +139,55 @@ pub(crate) fn resolve(path: &Path, offline: bool) -> Result<ResolutionResult> {
         bail!("invalid pcb.toml file(s):\n{msg}");
     }
 
-    pcb_zen::resolve_workspace_dependencies(workspace_info, path, offline)
+    if let Some(source) = &opts.stdlib_source {
+        materialize_bundled_stdlib(&mut workspace_info, source)?;
+    }
+
+    pcb_zen::resolve_workspace_dependencies(workspace_info, path, opts.offline)
+}
+
+/// Materialize an explicitly-provided stdlib into `<root>/.pcb/stdlib` and
+/// point the workspace at it via an in-memory `[patch]` entry.
+///
+/// Upstream otherwise calls `discover_source()` — a walk up a handful of
+/// ancestors of the executable looking for `lib/std` — which can never
+/// succeed inside an `.app` bundle. It runs *before* upstream's
+/// already-materialized check, so pre-populating the directory alone does
+/// not help; only the patch entry makes it skip discovery. The patch path is
+/// the same `.pcb/stdlib` upstream would have used, so `stdlib_dir()`,
+/// `@stdlib/...` resolution and the agent's Read grant are unchanged.
+fn materialize_bundled_stdlib(
+    workspace_info: &mut pcb_zen_core::workspace::WorkspaceInfo,
+    source: &Path,
+) -> Result<()> {
+    anyhow::ensure!(
+        source.join("pcb.toml").is_file(),
+        "bundled stdlib at {} has no pcb.toml",
+        source.display()
+    );
+    let target = pcb_zen_core::workspace_stdlib_root(&workspace_info.root);
+    let matches = pcb_zen_core::stdlib::native::source_matches_target(source, &target)
+        .unwrap_or(false);
+    if !matches {
+        if target.exists() {
+            std::fs::remove_dir_all(&target)
+                .with_context(|| format!("clearing {}", target.display()))?;
+        }
+        pcb_zen_core::stdlib::native::copy_source(source, &target).with_context(|| {
+            format!("copying stdlib {} -> {}", source.display(), target.display())
+        })?;
+    }
+    workspace_info
+        .config
+        .get_or_insert_with(Default::default)
+        .patch
+        .entry(pcb_zen_core::STDLIB_MODULE_PATH.to_string())
+        .or_insert_with(|| pcb_zen_core::config::PatchSpec {
+            path: Some(format!(".pcb/{}", pcb_zen_core::STDLIB_MODULE_PATH)),
+            branch: None,
+            rev: None,
+        });
+    Ok(())
 }
 
 pub(crate) fn workspace_root(resolution: &ResolutionResult) -> PathBuf {

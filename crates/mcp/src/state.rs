@@ -27,6 +27,8 @@ pub struct CanvasState {
     pub selection: Selection,
     /// The etchable project this board belongs to, when opened as one.
     pub project: Option<zen_build::ProjectDoc>,
+    /// The materialized stdlib dir, known after the first workspace open.
+    pub stdlib_dir: Option<PathBuf>,
     /// Monotonic build counter (bumped on every completed build).
     pub build_seq: u64,
 }

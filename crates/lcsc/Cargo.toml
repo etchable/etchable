@@ -1,0 +1,23 @@
+[package]
+name = "lcsc"
+version.workspace = true
+edition.workspace = true
+description = "LCSC/JLCPCB/EasyEDA part sourcing: anonymous search, asset fetch, shared cache, and pure EasyEDA->KiCad conversion. No pcb-* dependencies."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+# rustls only — the app must not depend on system OpenSSL/curl.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Some EasyEDA paths return raw gzip regardless of Accept-Encoding; we sniff
+# the 1f 8b magic and inflate ourselves.
+flate2 = "1"
+dirs = "6"
+
+[dev-dependencies]
+tempfile = "3"

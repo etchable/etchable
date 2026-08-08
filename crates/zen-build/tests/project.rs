@@ -326,3 +326,14 @@ mpn = "X"
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn scaffold_initializes_a_git_repo_without_the_git_binary() {
+    // gix is pure Rust: this must hold with an empty PATH.
+    let parent = tmpdir("gitinit");
+    let result = zen_build::scaffold_project_detailed(&parent, "repo").expect("scaffold");
+    assert!(result.git_initialized, "gix init should succeed");
+    assert!(result.root.join(".git").is_dir());
+    assert!(result.root.join(".git/HEAD").is_file());
+    let _ = fs::remove_dir_all(&parent);
+}

@@ -85,6 +85,110 @@ pub fn tool_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "list_library",
+            description: "Inventory of everything buildable WITHOUT the network: stdlib generics (with their config/io surface) and this project's components. Call this FIRST when sourcing parts. Real parts beyond the generics come from LCSC via search_parts + add_lcsc_component.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filter": {"type": "string", "description": "Case-insensitive substring filter on generic/component names"},
+                    "include_kicad": {"type": "boolean", "description": "Also list the vendored KiCad symbol/footprint libraries (escape hatch; default false — real parts come from LCSC)"}
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "get_symbol_pins",
+            description: "Mechanical pin extraction from a .kicad_sym file: pin names, numbers, electrical types, and the exact io identifiers a wrapper's pins={} needs. The ONLY sanctioned source of pin tables — never type them from a datasheet.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "library": {"type": "string", "description": "Symbol file path: @stdlib/kicad-symbols/<lib>.kicad_symdir/<name>.kicad_sym, or project-relative like components/foo.assets/foo.kicad_sym"},
+                    "symbol": {"type": "string", "description": "Symbol name, required only when the file holds more than one symbol"}
+                },
+                "required": ["library"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "add_component",
+            description: "Escape hatch: create a project component from a user-supplied .kicad_sym file already on disk. For real parts, use add_lcsc_component instead — it fetches everything from LCSC. The canvas rebuilds automatically.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+                    "symbol_library": {"type": "string", "description": "Symbol file path (@stdlib/... or project-relative); must hold exactly one symbol"},
+                    "symbol_name": {"type": "string"},
+                    "footprint": {"type": "string", "description": "Footprint path (@stdlib/kicad-footprints/<lib>.pretty/<fp>.kicad_mod or project-relative). Omit to use the symbol's own footprint property"},
+                    "mpn": {"type": "string"},
+                    "manufacturer": {"type": "string"},
+                    "lcsc": {"type": "string", "pattern": "^C\\d+$"},
+                    "description": {"type": "string"},
+                    "datasheet_url": {"type": "string"},
+                    "overwrite": {"type": "boolean"}
+                },
+                "required": ["name", "symbol_library"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "search_parts",
+            description: "Search for a part: local libraries (stdlib generics, project components) always match offline; the lcsc tier searches JLCPCB's live assembly catalog with stock, price, and Basic/Extended class. Prefer class=basic with healthy stock. Results include the add_lcsc_component call to vendor one.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 2, "description": "MPN, part family, or keywords (e.g. \"rp2040\", \"usb c receptacle\")"}
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "get_lcsc_part",
+            description: "Pre-commit check for one LCSC part: identity, ref prefix, Basic/Extended class, stock, price breaks, MSL, lifecycle status, datasheet, key attributes, and whether usable CAD data exists (has_symbol/has_footprint/has_3d, pin/pad counts, first pin names — the best early warning for a bad EasyEDA part). Call this before add_lcsc_component.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "lcsc": {"type": "string", "pattern": "^C\\d+$", "description": "LCSC part number, e.g. C2040"}
+                },
+                "required": ["lcsc"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "add_lcsc_component",
+            description: "THE way to add a real part: fetches the LCSC part's symbol, footprint, 3D model, and datasheet, converts them to KiCad, vendors everything into components/<name>.assets/, generates the wrapper .zen with every pin bound, and writes the part card with provenance. Converted assets are UNVERIFIED — cross-check pin/pad counts against the datasheet and relay warnings. The canvas rebuilds automatically.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$", "description": "Component name (becomes components/<name>.zen)"},
+                    "lcsc": {"type": "string", "pattern": "^C\\d+$", "description": "LCSC part number, e.g. C2040"},
+                    "include_3d": {"type": "boolean", "description": "Vendor the STEP model (default true; skipped over 8 MB)"},
+                    "fetch_datasheet": {"type": "boolean", "description": "Download the datasheet to datasheets/<name>.pdf (default true)"},
+                    "overwrite": {"type": "boolean"}
+                },
+                "required": ["name", "lcsc"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "fetch_datasheet",
+            description: "Download a PDF datasheet into the project at datasheets/<component>.pdf, where you can Read it. Use this instead of shelling out to curl.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "https URL of a PDF datasheet"},
+                    "component": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$", "description": "Component name; the file is saved as datasheets/<component>.pdf"}
+                },
+                "required": ["url", "component"],
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
+            name: "zener_reference",
+            description: "The authoritative Zener language guide (Component/Module/io/net semantics, part identity, validation rules). Call this for deep syntax questions instead of guessing or searching the web.",
+            input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+        },
+        ToolDef {
             name: "get_parts",
             description: "Resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance. Requires an open etchable project.",
             input_schema: json!({
@@ -134,6 +238,134 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             Some(build) => get_instance(build, s.project.as_ref(), args),
             None => err("no build available yet — open a board or call build first".into()),
         }),
+        "list_library" => state.read(|s| {
+            let Some(stdlib) = &s.stdlib_dir else {
+                return err("stdlib location unknown — open a board and build once first".into());
+            };
+            let filter = args.get("filter").and_then(Value::as_str);
+            let mut listing = zen_build::list_library(stdlib, s.project.as_ref(), filter);
+            // LCSC-only decision: the vendored KiCad libraries are hidden by
+            // default (generics resolve their own footprints internally).
+            if !args
+                .get("include_kicad")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                listing.kicad_symbols.clear();
+                listing.kicad_footprints.clear();
+            }
+            ok(json!(listing))
+        }),
+        "get_symbol_pins" => state.read(|s| {
+            let (Some(stdlib), Some(root)) = (&s.stdlib_dir, &s.workspace_root) else {
+                return err("stdlib location unknown — open a board and build once first".into());
+            };
+            let Some(raw) = args.get("library").and_then(Value::as_str) else {
+                return err("missing required argument: library".into());
+            };
+            let path = match zen_build::resolve_library_path(raw, root, stdlib) {
+                Ok(p) => p,
+                Err(e) => return err(format!("{e:#}")),
+            };
+            match zen_build::symbol_pins(&path, args.get("symbol").and_then(Value::as_str)) {
+                Ok(pins) => ok(json!(pins)),
+                Err(e) => err(format!("{e:#}")),
+            }
+        }),
+        "add_component" => {
+            let (stdlib, root, req) = state.read(|s| {
+                (
+                    s.stdlib_dir.clone(),
+                    s.project.as_ref().map(|p| p.root.clone()),
+                    serde_json::from_value::<zen_build::AddComponentRequest>(args.clone()),
+                )
+            });
+            let Some(stdlib) = stdlib else {
+                return err("stdlib location unknown — open a board and build once first".into());
+            };
+            let Some(root) = root else {
+                return err("no project open — add_component requires an etchable project".into());
+            };
+            let req = match req {
+                Ok(r) => r,
+                Err(e) => return err(format!("invalid arguments: {e}")),
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                zen_build::add_component(&root, &stdlib, &req)
+            })
+            .await;
+            match result {
+                Ok(Ok(res)) => ok(json!(res)),
+                Ok(Err(e)) => err(format!("{e:#}")),
+                Err(e) => err(format!("add_component panicked: {e}")),
+            }
+        }
+        "search_parts" => {
+            let Some(query) = args.get("query").and_then(Value::as_str) else {
+                return err("missing required argument: query".into());
+            };
+            let (stdlib, project) =
+                state.read(|s| (s.stdlib_dir.clone(), s.project.clone()));
+            let Some(stdlib) = stdlib else {
+                return err("stdlib location unknown — open a board and build once first".into());
+            };
+            let local = crate::search::search_parts(&stdlib, project.as_ref(), query).await;
+            let lcsc = crate::lcsc_tools::search_tier(query).await;
+            ok(json!({"local": local.get("local"), "lcsc": lcsc}))
+        }
+        "get_lcsc_part" => {
+            let Some(lcsc) = args.get("lcsc").and_then(Value::as_str) else {
+                return err("missing required argument: lcsc".into());
+            };
+            ok(crate::lcsc_tools::get_part(lcsc).await)
+        }
+        "add_lcsc_component" => {
+            let (Some(name), Some(lcsc)) = (
+                args.get("name").and_then(Value::as_str),
+                args.get("lcsc").and_then(Value::as_str),
+            ) else {
+                return err("missing required arguments: name, lcsc".into());
+            };
+            let Some(root) = state.read(|s| s.project.as_ref().map(|p| p.root.clone())) else {
+                return err(
+                    "no project open — add_lcsc_component requires an etchable project".into(),
+                );
+            };
+            let call = crate::lcsc_tools::AddLcscArgs {
+                name: name.to_string(),
+                lcsc: lcsc.to_string(),
+                include_3d: args.get("include_3d").and_then(Value::as_bool).unwrap_or(true),
+                fetch_datasheet: args
+                    .get("fetch_datasheet")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                overwrite: args.get("overwrite").and_then(Value::as_bool).unwrap_or(false),
+            };
+            match crate::lcsc_tools::add_component(&root, &call).await {
+                Ok(payload) => ok(payload),
+                Err(e) => err(e),
+            }
+        }
+        "fetch_datasheet" => {
+            let (Some(url), Some(component)) = (
+                args.get("url").and_then(Value::as_str),
+                args.get("component").and_then(Value::as_str),
+            ) else {
+                return err("missing required arguments: url, component".into());
+            };
+            let Some(root) = state.read(|s| s.project.as_ref().map(|p| p.root.clone())) else {
+                return err("no project open — fetch_datasheet requires an etchable project".into());
+            };
+            match crate::datasheet::fetch_datasheet(&root, url, component).await {
+                Ok(f) => ok(json!({
+                    "path": f.path,
+                    "bytes": f.bytes,
+                    "status": if f.already_existed { "already_exists" } else { "downloaded" },
+                })),
+                Err(e) => err(format!("{e:#}")),
+            }
+        }
+        "zener_reference" => ok(json!({"reference": crate::ZENER_REFERENCE})),
         "get_parts" => state.read(|s| {
             let Some(project) = &s.project else {
                 return err("no project open — get_parts requires an etchable project".into());

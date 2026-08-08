@@ -2,6 +2,13 @@
 
 Date: 2026-08-08. Status: accepted, implemented in this change.
 
+> **Amended by 0004 (same day):** the Diode-registry tier of
+> `search_parts` is deleted (registry auth never worked; the `pcb` CLI is
+> no longer invoked anywhere), `add_component` is demoted to an escape
+> hatch for user-supplied files (`add_lcsc_component` is the primary path
+> for real parts), and the packaged-app stdlib limitation noted below is
+> fixed by bundling the stdlib into the app.
+
 Asked to "create an RP2350 board with USB-C", the embedded agent burned
 ~15 Bash permission prompts probing `pcb` registry commands (which all fail
 without auth) and then curl-ing KiCad's GitLab for symbols — 404s, stale

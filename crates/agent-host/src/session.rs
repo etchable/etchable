@@ -48,6 +48,19 @@ impl Default for SpawnConfig {
     }
 }
 
+/// The `claude` CLI is the one sanctioned external binary (user-installed,
+/// never bundled). A missing binary is an expected first-run condition, not
+/// an infrastructure failure — give the fix, not an errno.
+#[derive(Debug, thiserror::Error)]
+pub enum SpawnError {
+    #[error(
+        "Claude Code CLI not found (`{bin}`). Install it with \
+         `npm install -g @anthropic-ai/claude-code`, or point \
+         ETCHABLE_CLAUDE_BIN at the binary."
+    )]
+    CliNotFound { bin: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
     Starting,
@@ -109,9 +122,16 @@ impl AgentSession {
             cmd.arg("--append-system-prompt").arg(prompt);
         }
 
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("failed to spawn {}", config.claude_bin.display()))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                anyhow::Error::new(SpawnError::CliNotFound {
+                    bin: config.claude_bin.display().to_string(),
+                })
+            } else {
+                anyhow::Error::new(e)
+                    .context(format!("failed to spawn {}", config.claude_bin.display()))
+            }
+        })?;
 
         let stdout = child.stdout.take().context("child stdout not piped")?;
         let stdin = child.stdin.take().context("child stdin not piped")?;

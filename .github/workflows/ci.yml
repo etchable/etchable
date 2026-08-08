@@ -39,6 +39,9 @@ jobs:
 
       - name: Rust tests
         run: cargo test --workspace
+        env:
+          # Tests must never touch LCSC/EasyEDA; fixtures are the wire truth.
+          ETCHABLE_LCSC_OFFLINE: "1"
 
       - name: Frontend typecheck + build
         run: |

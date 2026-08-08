@@ -3,9 +3,16 @@
 //! desktop app; the agent is wired in at spawn time via a generated
 //! `--mcp-config`, so there is zero user setup.
 
+pub mod datasheet;
+pub mod lcsc_tools;
+pub mod search;
 pub mod server;
 pub mod state;
 pub mod tools;
+
+/// Upstream's Zener language skill, vendored by scripts/fetch-stdlib.sh and
+/// compiled in so `zener_reference` works in packaged builds too.
+pub const ZENER_REFERENCE: &str = include_str!("../assets/zener-language-skill.md");
 
 pub use server::{mcp_config_json, serve};
 pub use state::{CanvasState, RebuildRequest, Selection, SharedState};
@@ -130,7 +137,85 @@ mod tests {
         assert!(names.contains(&"get_selection"));
         assert!(names.contains(&"get_circuit_json"));
         assert!(names.contains(&"get_parts"));
-        assert_eq!(names.len(), 8);
+        assert!(names.contains(&"list_library"));
+        assert!(names.contains(&"get_symbol_pins"));
+        assert!(names.contains(&"add_component"));
+        assert!(names.contains(&"search_parts"));
+        assert!(names.contains(&"get_lcsc_part"));
+        assert!(names.contains(&"add_lcsc_component"));
+        assert!(names.contains(&"fetch_datasheet"));
+        assert!(names.contains(&"zener_reference"));
+        assert_eq!(names.len(), 16);
+    }
+
+    #[tokio::test]
+    async fn zener_reference_serves_the_vendored_guide() {
+        let state = fixture_state();
+        let (text, is_error) =
+            tools::call_tool(&state, "zener_reference", &serde_json::json!({})).await;
+        assert!(!is_error);
+        assert!(text.contains("Zener"), "{}", &text[..text.len().min(200)]);
+    }
+
+    #[tokio::test]
+    async fn fetch_datasheet_needs_a_project_and_https() {
+        let state = fixture_state();
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "fetch_datasheet",
+            &serde_json::json!({"url": "https://example.com/x.pdf", "component": "X"}),
+        )
+        .await;
+        assert!(is_error);
+        assert!(text.contains("no project open"), "{text}");
+    }
+
+    #[test]
+    fn local_search_ranks_and_shapes_hits() {
+        use zen_build::{GenericInfo, LibraryListing, SymbolLibraryInfo};
+        let listing = LibraryListing {
+            generics: vec![GenericInfo {
+                name: "Resistor".into(),
+                params: vec!["value".into()],
+                ios: vec!["P1".into(), "P2".into()],
+            }],
+            // KiCad symbol libraries no longer surface in search — real
+            // parts come from the LCSC tier (decision 0004).
+            kicad_symbols: vec![SymbolLibraryInfo {
+                library: "MCU_RaspberryPi".into(),
+                symbols: vec!["RP2040".into()],
+                truncated: None,
+            }],
+            ..Default::default()
+        };
+        assert!(search::local_matches(&listing, "rp2040").is_empty());
+        assert!(search::local_matches(&listing, "resistor")[0]["use"]
+            .as_str()
+            .unwrap()
+            .contains("generics/Resistor.zen"));
+    }
+
+    #[tokio::test]
+    async fn scaffolding_tools_need_a_workspace() {
+        let state = fixture_state();
+        for (tool, args) in [
+            ("list_library", serde_json::json!({})),
+            (
+                "get_symbol_pins",
+                serde_json::json!({"library": "@stdlib/x.kicad_sym"}),
+            ),
+            (
+                "add_component",
+                serde_json::json!({"name": "X", "symbol_library": "@stdlib/x.kicad_sym"}),
+            ),
+        ] {
+            let (text, is_error) = tools::call_tool(&state, tool, &args).await;
+            assert!(is_error, "{tool} should error without a workspace");
+            assert!(
+                text.contains("stdlib location unknown"),
+                "{tool}: {text}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -29,6 +29,10 @@ pub struct AppState {
     pub agent: tokio::sync::Mutex<Option<AgentSession>>,
     /// Written once the MCP listener is up.
     pub mcp_config_path: std::sync::OnceLock<PathBuf>,
+    /// Bundled stdlib source (the app's Resources/stdlib), set at startup
+    /// when present. Unset under `tauri dev` — upstream's exe-ancestor
+    /// discovery finds the repo's lib/std there.
+    pub stdlib_source: std::sync::OnceLock<PathBuf>,
     /// Keeps the fs watcher alive; replaced when a new board is opened.
     pub watcher: std::sync::Mutex<Option<notify::RecommendedWatcher>>,
 }

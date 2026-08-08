@@ -7,7 +7,7 @@
 
 mod session;
 
-pub use session::{AgentEventRx, AgentSession, SessionStatus, SpawnConfig};
+pub use session::{AgentEventRx, AgentSession, SessionStatus, SpawnConfig, SpawnError};
 
 use std::path::Path;
 use std::process::Stdio;

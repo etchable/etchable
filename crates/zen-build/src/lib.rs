@@ -5,6 +5,7 @@
 //! boundary ([`model`]). Pin the pcb-* git tag deliberately; these are
 //! internal APIs with no stability promise.
 
+mod catalog;
 mod circuit_json;
 mod convert;
 mod layout;
@@ -13,6 +14,7 @@ mod pipeline;
 mod positions;
 mod project;
 mod route;
+mod scaffold;
 mod symbol_geom;
 
 use std::collections::BTreeMap;
@@ -22,11 +24,33 @@ use anyhow::{Context, Result};
 
 pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
 pub use model::*;
-pub use positions::{content_hash, write_positions};
-pub use project::{
-    load_project, resolve_parts, scaffold_project, ComponentCard, PartFields, ProjectDoc,
-    ResolvedPart, VendorSel, ETCH_MANIFEST,
+pub use catalog::{
+    list_library, resolve_library_path, symbol_pins, FootprintLibraryInfo, GenericInfo,
+    LibraryListing, ProjectComponentInfo, SymbolLibraryInfo, SymbolPinInfo, SymbolPins,
 };
+pub use positions::{content_hash, write_positions};
+pub use scaffold::{
+    add_component, install_component, AddComponentRequest, AddComponentResult, ExtraAsset,
+    InstallComponentRequest,
+};
+pub use project::{
+    load_project, resolve_parts, scaffold_project, scaffold_project_detailed, ComponentCard,
+    PartFields, ProjectDoc, ResolvedPart, ScaffoldResult, VendorSel, ETCH_MANIFEST,
+};
+
+/// How to open a workspace.
+#[derive(Debug, Clone, Default)]
+pub struct OpenOptions {
+    /// Skip network fetches; fail if a remote dependency isn't cached or
+    /// vendored. Etchable projects declare no dependencies, so this is the
+    /// normal mode.
+    pub offline: bool,
+    /// Explicit stdlib source directory (one containing `pcb.toml`). When
+    /// set, it is materialized into `<root>/.pcb/stdlib` and upstream's
+    /// exe-ancestor discovery is bypassed — the packaged-app path, where
+    /// walking up from the executable can never find `lib/std`.
+    pub stdlib_source: Option<PathBuf>,
+}
 
 /// An opened .zen workspace with resolved dependencies.
 ///
@@ -35,7 +59,7 @@ pub use project::{
 pub struct Workspace {
     eval: pipeline::EvalState,
     root: PathBuf,
-    offline: bool,
+    opts: OpenOptions,
 }
 
 impl Workspace {
@@ -43,6 +67,18 @@ impl Workspace {
     /// and resolve its dependencies. `offline` skips network fetches and
     /// fails if a remote dependency is not already cached or vendored.
     pub fn open(path: &Path, offline: bool) -> Result<Self> {
+        Self::open_with(
+            path,
+            &OpenOptions {
+                offline,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// [`Workspace::open`] with explicit options — notably a bundled stdlib
+    /// source for packaged apps.
+    pub fn open_with(path: &Path, opts: &OpenOptions) -> Result<Self> {
         let start = if path.is_file() {
             path.parent().unwrap_or(path)
         } else {
@@ -51,12 +87,12 @@ impl Workspace {
         let start = start
             .canonicalize()
             .with_context(|| format!("no such path: {}", start.display()))?;
-        let resolution = pipeline::resolve(&start, offline)?;
+        let resolution = pipeline::resolve(&start, opts)?;
         let root = pipeline::workspace_root(&resolution);
         Ok(Self {
             eval: pipeline::EvalState::new(resolution),
             root,
-            offline,
+            opts: opts.clone(),
         })
     }
 
@@ -74,7 +110,7 @@ impl Workspace {
     /// Re-run workspace discovery + dependency resolution. Call on
     /// `pcb.toml` changes.
     pub fn reload(&mut self) -> Result<()> {
-        let resolution = pipeline::resolve(&self.root.clone(), self.offline)?;
+        let resolution = pipeline::resolve(&self.root.clone(), &self.opts.clone())?;
         self.root = pipeline::workspace_root(&resolution);
         self.eval = pipeline::EvalState::new(resolution);
         Ok(())

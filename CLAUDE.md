@@ -23,7 +23,9 @@ the trajectory).
 - `pnpm tauri dev` — run the app (from the repo root or `apps/desktop`;
   never from anywhere else — the vite dev server is strict on port 1420)
 - `./scripts/fetch-stdlib.sh` — vendor `lib/std` (required once per clone;
-  zen eval discovers it by walking up from the executable path)
+  zen eval discovers it by walking up from the executable path; packaged
+  apps instead bundle it via `bundle.resources` +
+  `OpenOptions::stdlib_source`)
 
 ## Hard rules
 
@@ -42,6 +44,18 @@ the trajectory).
   discipline is a design invariant: every tool response is scoped/capped.
 - `zen-build` creates a fresh `EvalSession` per build on purpose (sessions
   cache parsed sources by path; reuse would serve stale files to the watcher).
+- **`easyeda2kicad.py` is AGPL-3.0 — never read, port, or cite it** (a copy
+  exists at `~/.local/share/uv/tools/easyeda2kicad/`; it is off-limits, as
+  are its derivatives like `easyeda2kicad-rs`). The workspace is MIT.
+  Permitted conversion references: `easyeda/eext-format-converter`
+  (Apache-2.0), `tscircuit/easyeda-converter` (MIT), `JLC2KiCad_lib` (MIT),
+  `pcb-jlcpcb` (MIT). Wire formats/endpoints/field names are facts and free.
+- **The app ships everything it needs.** No runtime PATH lookups, no
+  external CLIs (gix for git init, rustls for TLS, pure-Rust conversion);
+  the single sanctioned external binary is the user-installed `claude` CLI.
+  In `crates/lcsc`, never touch `/api/products/{C#}/components` (CloudFront
+  hard-bans it; a test greps for it) — the `searchByNumbers` → uuid route is
+  the only sanctioned path, with an honest UA (never `Mozilla/5.0`).
 
 ## Contracts
 
@@ -67,6 +81,21 @@ the trajectory).
   failures). `zen_build::project` is the only implementation; watcher
   routes `*.toml`/datasheet changes to a project-only refresh
   (`project-changed` event, no build flash).
+- Agent scaffolding harness (docs/decisions/0003, amended by 0004): the MCP
+  surface is 16 tools; sourcing never needs Bash. Real parts come from LCSC
+  via `search_parts` (live JLCPCB tier: stock/price/Basic-vs-Extended) →
+  `get_lcsc_part` (pre-commit check incl. EDA-quality probe) →
+  `add_lcsc_component` (fetch → convert → `install_component`); `crates/lcsc`
+  owns the client/cache/converters (fetch/convert split: conversion is pure
+  and fixture-tested, network failures map to actionable statuses — never
+  opaque errors). `add_component` is the escape hatch for user-supplied
+  files. Installed wrappers emit `Symbol(library="./…")` — the `./` prefix is
+  load-bearing (a bare path parses as a package ref); converted symbols
+  always carry `Manufacturer_Name`/`Manufacturer_Part_Number` so no
+  `part=Part(...)` splice is needed, and the `Footprint` property is exactly
+  the install name (an `X:Y` value is a hard eval error). Cards carry
+  `[provenance]` (`verified = false` until a human checks) and `[assets]`.
+  Thinking blocks/deltas surface in the chat; keep `flatten()` emitting them.
 - Embedded-agent permissions: sessions spawn with `--allowedTools`
   auto-allowing the app's own MCP server (`mcp__etchable`) plus `Read`,
   `Edit`, and `Write` inside the open workspace root — those never show

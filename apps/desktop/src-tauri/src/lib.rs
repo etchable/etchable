@@ -27,6 +27,7 @@ pub fn run() {
         build_tx,
         agent: tokio::sync::Mutex::new(None),
         mcp_config_path: std::sync::OnceLock::new(),
+        stdlib_source: std::sync::OnceLock::new(),
         watcher: std::sync::Mutex::new(None),
     });
 
@@ -36,6 +37,18 @@ pub fn run() {
         .manage(app_state.clone())
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // Packaged apps carry the stdlib in Resources/stdlib (see
+            // bundle.resources); exe-ancestor discovery can never find
+            // lib/std from inside an .app. Under `tauri dev` the bundled
+            // copy is absent and discovery finds the repo checkout.
+            if let Ok(dir) = app.path().resource_dir() {
+                let bundled = dir.join("stdlib");
+                if bundled.join("pcb.toml").is_file() {
+                    tracing::info!("using bundled stdlib at {}", bundled.display());
+                    let _ = app_state.stdlib_source.set(bundled);
+                }
+            }
 
             builder::spawn_builder(handle.clone(), app_state.clone(), build_rx, rebuild_rx);
 
