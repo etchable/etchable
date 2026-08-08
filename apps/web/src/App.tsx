@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { api } from "./lib/api";
 import { authClient } from "./lib/auth-client";
 
@@ -46,12 +52,6 @@ function SelectionBox({ children }: { children: ReactNode }) {
       {handles.map((pos) => (
         <span key={pos} className={`selection-handle ${pos}`} aria-hidden />
       ))}
-      <span
-        className="absolute -bottom-3.5 -right-2 rounded bg-sky px-1.5 py-0.5 font-mono text-[11px] leading-tight text-white"
-        aria-hidden
-      >
-        2 layers × friendly
-      </span>
       {children}
     </div>
   );
@@ -63,23 +63,52 @@ function EtchWithTrace() {
       etch
       <svg
         className="marker-stroke absolute -bottom-1 left-0 w-full"
-        viewBox="0 0 120 12"
-        height="12"
+        viewBox="0 0 120 6"
+        height="6"
         preserveAspectRatio="none"
         aria-hidden
       >
-        {/* A routed copper trace ending in a via, like a board layer. */}
         <path
-          d="M2 9 L 38 9 L 46 3 L 84 3 L 92 9 L 108 9"
+          d="M2 3 L 118 3"
           fill="none"
           stroke="var(--color-copper)"
-          strokeWidth="3"
+          strokeWidth="3.5"
           strokeLinecap="round"
-          strokeLinejoin="round"
         />
-        <circle cx="113" cy="9" r="3" fill="var(--color-copper)" />
       </svg>
     </span>
+  );
+}
+
+// Background traces route in slowly, like a board filling itself in.
+const TRACES: { d: string; via?: [number, number]; delay: number; dur: number }[] = [
+  { d: "M -20 120 H 300 L 360 180 H 520", via: [524, 180], delay: 0.4, dur: 7 },
+  { d: "M 1460 80 H 1150 L 1090 140 H 984", via: [980, 140], delay: 2.2, dur: 6 },
+  { d: "M -20 700 H 200 L 260 640 H 376", via: [380, 640], delay: 4.5, dur: 7 },
+  { d: "M 1460 760 H 1250 L 1190 700 H 1084", via: [1080, 700], delay: 6.5, dur: 6 },
+  { d: "M 120 -20 V 200 L 180 260 V 376", via: [180, 380], delay: 8.5, dur: 6 },
+  { d: "M 1320 -20 V 160 L 1260 220 V 316", via: [1260, 320], delay: 10.5, dur: 6 },
+  { d: "M 400 920 V 780 L 460 720 V 656", via: [460, 652], delay: 12.5, dur: 6 },
+  { d: "M 1040 920 V 800 L 980 740 V 680", via: [980, 676], delay: 14.5, dur: 6 },
+  { d: "M -20 420 H 120 L 180 480 H 236", via: [240, 480], delay: 16.5, dur: 6 },
+  { d: "M 1460 420 H 1330 L 1270 480 H 1210 L 1180 450", via: [1176, 446], delay: 18.5, dur: 7 },
+];
+
+function CircuitBackground() {
+  return (
+    <svg
+      className="circuit pointer-events-none fixed inset-0 h-full w-full"
+      viewBox="0 0 1440 900"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden
+    >
+      {TRACES.map(({ d, via, delay, dur }) => (
+        <g key={d} style={{ "--delay": `${delay}s`, "--dur": `${dur}s` } as CSSProperties}>
+          <path d={d} />
+          {via && <circle cx={via[0]} cy={via[1]} r="5" />}
+        </g>
+      ))}
+    </svg>
   );
 }
 
@@ -284,10 +313,11 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false);
   return (
     <div className="canvas-bg min-h-screen font-sans text-ink">
+      <CircuitBackground />
       <header className="fixed top-4 right-4 z-10">
         <AuthChip open={authOpen} onToggle={() => setAuthOpen((o) => !o)} />
       </header>
-      <main className="mx-auto flex max-w-3xl flex-col items-center gap-12 px-6 py-24 text-center sm:py-32">
+      <main className="relative z-10 mx-auto flex max-w-3xl flex-col items-center gap-12 px-6 py-24 text-center sm:py-32">
         <div className="relative">
           <Cursor
             name="you?"
