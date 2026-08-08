@@ -1,7 +1,8 @@
 # Developing etchable
 
 Everything you need to hack on etchable. For what the app *is*, start with
-the [README](../README.md); for the visual language, see
+the [README](../README.md); for product principles, see
+[product.md](product.md); for the visual language, see
 [design.md](design.md); for recorded decisions, see [decisions/](decisions/).
 
 ## Architecture
