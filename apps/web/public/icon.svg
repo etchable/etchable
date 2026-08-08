@@ -18,6 +18,11 @@
     </pattern>
   </defs>
 
+  <!-- Everything rides one scale wrapper: Apple's grid keeps the squircle
+       at ~81% of the canvas, but most third-party dock icons run larger,
+       so we sit at ~88% to hold visual parity on the dock. -->
+  <g transform="translate(512 512) scale(1.0817) translate(-512 -512)">
+
   <!-- squircle substrate -->
   <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#substrate)"/>
   <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#grid)"/>
@@ -31,4 +36,6 @@
   <!-- the trace ends in a via -->
   <circle cx="678" cy="660" r="72" fill="url(#copper)"/>
   <circle cx="678" cy="660" r="27" fill="#1c2333"/>
+
+  </g>
 </svg>
