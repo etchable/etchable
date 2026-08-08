@@ -88,15 +88,19 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   // instead of sitting behind it as static wallpaper.
   //
   // The same observer keeps the camera steady across rebuilds: circuit-to-svg
-  // re-fits the SVG to element bounds on every regeneration, so when the fit
-  // translates (same scale ±2%) — e.g. after a drag-save rebuild — we apply
-  // the inverse translation to an inner wrapper. Scale changes reset the
-  // compensation (a real refit). Direct style writes, not state — pan/zoom
-  // emits a mutation per frame.
+  // re-fits the SVG to element bounds on every regeneration, so after a
+  // drag-save rebuild the fit translates and we apply the inverse translation
+  // to an inner wrapper. The viewer ALSO regenerates whenever its container
+  // resizes (seam drags, sidebar toggles, window resizes), and those re-fits
+  // are legitimate — so the discriminator is the container size, not the
+  // transform: a same-size regeneration is a rebuild echo (compensate;
+  // a scale change beyond ±2% is a real refit and resets), while a resized
+  // container means we accept the new fit and drop any compensation.
+  // Direct style writes, not state — pan/zoom emits a mutation per frame.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    let last: { a: number; e: number; f: number } | null = null;
+    let last: { a: number; e: number; f: number; w: number; h: number } | null = null;
     let offset = { x: 0, y: 0 };
     if (innerRef.current) innerRef.current.style.transform = "";
     const sync = () => {
@@ -109,7 +113,13 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       const unit = Math.abs(a); // px per schematic unit
       if (!Number.isFinite(unit) || unit === 0 || !Number.isFinite(e) || !Number.isFinite(f)) return;
 
-      if (last && (e !== last.e || f !== last.f || a !== last.a)) {
+      const rect = wrap.getBoundingClientRect();
+      const resized = last !== null && (rect.width !== last.w || rect.height !== last.h);
+
+      if (resized) {
+        offset = { x: 0, y: 0 };
+        if (innerRef.current) innerRef.current.style.transform = "";
+      } else if (last && (e !== last.e || f !== last.f || a !== last.a)) {
         if (Math.abs(a - last.a) <= 0.02 * Math.abs(last.a)) {
           offset = { x: offset.x + (last.e - e), y: offset.y + (last.f - f) };
         } else {
@@ -120,7 +130,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
             offset.x || offset.y ? `translate(${offset.x}px, ${offset.y}px)` : "";
         }
       }
-      last = { a, e, f };
+      last = { a, e, f, w: rect.width, h: rect.height };
 
       let cell = unit;
       while (cell < 18) cell *= 5;

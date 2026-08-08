@@ -38,11 +38,12 @@
   background-size: 26px 26px;
 }
 
-/* Selection box: marching ants + corner handles, like a selected object. */
+/* Selection box: marching ants + corner handles, like a selected object.
+   The handle is flex-centered inside a larger invisible grip hit-area. */
 .selection-handle {
-  position: absolute;
   width: 10px;
   height: 10px;
+  flex: none;
   background: #fff;
   border: 2px solid var(--color-sky);
   border-radius: 2px;
@@ -82,4 +83,253 @@
     animation: none;
     stroke-dashoffset: 0;
   }
+}
+
+/* ————— App shell (Shell.tsx, ported from zett-app) —————
+   Grid frame: titlebar row above [left sidebar | content card | right
+   sidebar]. Column widths are driven by --shell-left-w/--shell-right-w,
+   set imperatively by Shell.tsx; registering them makes the dependent
+   width/mask transitions animate. --shell-*-style-w is the *visual* width:
+   normally equal, but overlay mode pins it to the overlay width while the
+   column itself stays collapsed, and the mask reveals the difference. */
+
+@property --shell-left-w {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --shell-right-w {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+.shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-chrome, #f4f2ec);
+}
+
+.shell-titlebar {
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Reserve room for the native macOS traffic lights. Tracks the left
+   sidebar width so the collapse button rides the sidebar's edge, but
+   never shrinks past the lights themselves. */
+.shell-lights {
+  flex: none;
+  width: max(84px, var(--shell-left-w));
+}
+.shell-lights.shell-animate {
+  transition: width 0.2s ease-out;
+}
+
+.shell-titlebar-user {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.shell-collapser {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 4px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  cursor: pointer;
+  transition:
+    background-color 0.1s ease-out,
+    color 0.1s ease-out;
+}
+.shell-collapser:hover {
+  background: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  color: color-mix(in srgb, var(--color-ink) 92%, transparent);
+}
+
+.shell-left-wrap,
+.shell-right-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.shell-left-wrap {
+  width: var(--shell-left-w);
+}
+.shell-right-wrap {
+  width: var(--shell-right-w);
+  /* Flipped so the same left-anchored mask math serves both sides; the
+     inner wrapper flips the content back. */
+  transform: scale(-1, 1);
+  transform-origin: center;
+}
+.shell-left-wrap.shell-animate,
+.shell-right-wrap.shell-animate {
+  transition: width 0.2s ease-out;
+}
+
+.shell-overlay {
+  z-index: 100;
+}
+
+/* Sidebar content keeps its full layout width while the column animates
+   or overlays; a two-layer mask (hard cut + a soft 2rem gradient tile
+   that only shows mid-drag, when .shell-animate is absent) trims it to
+   the visual width. */
+.shell-left,
+.shell-right {
+  height: 100%;
+  background: var(--color-chrome, #f4f2ec);
+  mask-image: linear-gradient(to right, black 0, black 100%),
+    url(data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4NCjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2aWV3Qm94PSIwIDAgNTAwIDUwMCIgd2lkdGg9IjUwMHB4IiBoZWlnaHQ9IjUwMHB4Ij4NCiAgICA8ZGVmcz4NCiAgICAgICAgPGxpbmVhckdyYWRpZW50IGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iMjUwIiB5MT0iMCIgeDI9IjI1MCIgeTI9IjUwMCIgaWQ9ImdyYWRpZW50LTAiPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjogcmdiKDAsIDAsIDApOyBzdG9wLW9wYWNpdHk6IDA7IiAvPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjogcmdiKDAlIDAlIDAlKSIgLz4NCiAgICAgICAgPC9saW5lYXJHcmFkaWVudD4NCiAgICA8L2RlZnM+DQogICAgPHJlY3Qgd2lkdGg9IjUwMCIgaGVpZ2h0PSI1MDAiIHN0eWxlPSJmaWxsOiB1cmwoI2dyYWRpZW50LTApOyIgaWQ9Im9iamVjdC0wIiB0cmFuc2Zvcm09InJvdGF0ZSg5MCkiIHRyYW5zZm9ybS1vcmlnaW49IjUwJSA1MCUiLz4NCjwvc3ZnPg==);
+  mask-repeat: no-repeat, repeat-y;
+  mask-composite: add;
+  contain: layout size style;
+  contain-intrinsic-height: 100%;
+}
+.shell-left {
+  width: max(100%, var(--shell-left-style-w));
+  min-width: var(--shell-left-min);
+  contain-intrinsic-width: max(100%, var(--shell-left-style-w));
+  mask-position:
+    0rem 0rem,
+    var(--shell-left-style-w) 0rem;
+  mask-size:
+    var(--shell-left-style-w) 100%,
+    2rem 2rem;
+}
+.shell-right {
+  width: max(100%, var(--shell-right-style-w));
+  min-width: var(--shell-right-min);
+  contain-intrinsic-width: max(100%, var(--shell-right-style-w));
+  mask-position:
+    0rem 0rem,
+    var(--shell-right-style-w) 0rem;
+  mask-size:
+    var(--shell-right-style-w) 100%,
+    2rem 2rem;
+}
+.shell-right-inner {
+  min-width: var(--shell-right-min);
+  transform: scale(-1, 1);
+  transform-origin: center;
+}
+.shell-left-wrap.shell-animate .shell-left {
+  mask-size:
+    var(--shell-left-style-w) 100%,
+    0rem 0rem;
+}
+.shell-right-wrap.shell-animate .shell-right {
+  mask-size:
+    var(--shell-right-style-w) 100%,
+    0rem 0rem;
+}
+.shell-left-wrap.shell-animate .shell-left,
+.shell-right-wrap.shell-animate .shell-right {
+  transition:
+    mask-position 0.2s ease-out,
+    mask-size 0.2s ease-out,
+    width 0.2s ease-out;
+}
+
+.shell-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: var(--shell-content-min);
+}
+
+.shell-content-wrap {
+  display: flex;
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  z-index: 20;
+}
+
+/* The elevated content card: island shadow + hairline, not borders. */
+.shell-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-canvas);
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  transition:
+    border-top-left-radius 0s,
+    border-top-right-radius 0s;
+  transition-delay: 0.1s;
+  box-shadow:
+    0 2px 5px rgba(35, 43, 63, 0.08),
+    0 10px 24px rgba(35, 43, 63, 0.09),
+    0 0 0 0.5px rgba(35, 43, 63, 0.12);
+}
+
+.shell-handle {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 16px;
+  z-index: 100;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.shell-handle-left {
+  left: -8px;
+}
+.shell-handle-right {
+  right: -8px;
+}
+
+.shell-handle-view {
+  position: absolute;
+  height: 100%;
+  width: 4px;
+  background: color-mix(in srgb, var(--color-sky) 55%, transparent);
+  opacity: 0;
+  transition: opacity 0.1s ease-out;
+  transition-delay: 0.1s;
+}
+.shell-handle-left .shell-handle-view {
+  left: 6px;
+  border-top-left-radius: 100px;
+}
+.shell-handle-right .shell-handle-view {
+  right: 6px;
+  border-top-right-radius: 100px;
+}
+.shell-handle:hover .shell-handle-view,
+.shell-other-hover:has(.shell-handle:hover) .shell-handle-view {
+  opacity: 1;
+}
+
+/* Square off the card corner the handle is about to drag. */
+.shell:has(.shell-handle-right:hover) .shell-content,
+.shell-other-hover:has(.shell-handle-left:hover) .shell-content {
+  border-top-right-radius: 0;
+}
+.shell:has(.shell-handle-left:hover) .shell-content,
+.shell-other-hover:has(.shell-handle-right:hover) .shell-content {
+  border-top-left-radius: 0;
 }

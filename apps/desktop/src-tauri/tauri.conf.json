@@ -14,7 +14,10 @@
       {
         "title": "etchable",
         "width": 1400,
-        "height": 900
+        "height": 900,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 15, "y": 24 }
       }
     ],
     "security": {

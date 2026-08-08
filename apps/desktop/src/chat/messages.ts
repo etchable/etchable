@@ -233,7 +233,11 @@ export function prettyJson(input: unknown): string {
   }
 }
 
-export function formatResultFooter(item: ChatItem & { kind: "result" }): string {
+export function formatResultFooter(item: {
+  durationMs?: number;
+  costUsd?: number;
+  numTurns?: number;
+}): string {
   const parts: string[] = [];
   if (item.durationMs !== undefined) parts.push(`${(item.durationMs / 1000).toFixed(1)}s`);
   if (item.costUsd !== undefined) parts.push(`$${item.costUsd.toFixed(2)}`);
