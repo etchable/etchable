@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- etchable app icon: a lowercase "e" routed like a copper trace — 45°
+       corners, one continuous stroke, ending in a via — on the navy
+       substrate (docs/design.md). Source of truth for the desktop icon set
+       (tauri icon) and both favicons. -->
+  <defs>
+    <linearGradient id="substrate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2d3650"/>
+      <stop offset="1" stop-color="#1c2333"/>
+    </linearGradient>
+    <linearGradient id="copper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d98d4d"/>
+      <stop offset="1" stop-color="#b06c31"/>
+    </linearGradient>
+    <!-- the paper canvas dot grid, whispered onto the substrate -->
+    <pattern id="grid" width="104" height="104" patternUnits="userSpaceOnUse">
+      <circle cx="52" cy="52" r="7" fill="#ffffff" opacity="0.05"/>
+    </pattern>
+  </defs>
+
+  <!-- squircle substrate -->
+  <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#substrate)"/>
+  <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#grid)"/>
+
+  <!-- the routed "e": crossbar, bowl, and a 45° tail out of the bottom -->
+  <path
+    d="M 312 488 H 712 V 428 L 596 312 H 428 L 312 428 V 652 L 428 768 H 570 L 640 698"
+    fill="none" stroke="url(#copper)" stroke-width="96"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- the trace ends in a via -->
+  <circle cx="678" cy="660" r="72" fill="url(#copper)"/>
+  <circle cx="678" cy="660" r="27" fill="#1c2333"/>
+</svg>
