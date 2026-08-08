@@ -9,7 +9,7 @@ cask "etchable" do
   desc "etchable desktop app"
   homepage "https://github.com/etchable/etchable"
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
   depends_on arch: :arm64
 
   app "etchable.app"
