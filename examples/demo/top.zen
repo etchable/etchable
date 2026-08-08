@@ -16,7 +16,7 @@ LED_A = Net("LED_A")
 V_SENSE = Analog("V_SENSE")
 
 Resistor(name="R_LIMIT", value="1kohm", package="0402", P1=VCC, P2=LED_A)
-Led(name="D_STATUS", package="0402", color="red", A=LED_A, K=GND)
+Led(name="D_STATUS", package="0402", color="blue", A=LED_A, K=GND)
 
 VoltageDivider(
     name="SENSE_DIV",

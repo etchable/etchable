@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Button, IconCheck, IconX, Input, Panel, Spinner } from "@etchable/ui";
+import { Button, IconCheck, IconX, Input, SelectionBox, Spinner } from "@etchable/ui";
 import CircuitCanvas from "./circuit/CircuitCanvas";
 import Chat from "./chat/Chat";
 import Problems from "./problems/Problems";
@@ -186,53 +186,37 @@ export default function App() {
           </aside>
         </div>
       ) : (
-        <div className="dotgrid flex flex-1 items-center justify-center">
-          <Panel className="flex max-w-[460px] flex-col items-center gap-3.5 px-11 py-9">
-            <div className="font-display text-[26px] font-extrabold tracking-tight">
+        <div className="dotgrid flex flex-1 flex-col items-center justify-center">
+          <SelectionBox>
+            <h1 className="font-display text-6xl font-extrabold tracking-tight">
               etchable
+            </h1>
+          </SelectionBox>
+          <p className="mt-2 text-[13px] text-ink/55">
+            A friendly little tool for designing circuit boards.
+          </p>
+          <Button variant="copper" size="lg" className="mt-8" onClick={() => void pickBoard()}>
+            Open a board
+          </Button>
+          <Input
+            mono
+            inputSize="sm"
+            type="text"
+            placeholder="…or paste a file path"
+            className="mt-4 w-72 text-center opacity-60 transition-opacity focus:opacity-100"
+            value={pastedPath}
+            onChange={(e) => setPastedPath(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && pastedPath.trim()) {
+                void app.openBoard(pastedPath.trim());
+              }
+            }}
+          />
+          {app.boardError && (
+            <div className="mt-4 max-w-[420px] select-text whitespace-pre-wrap text-center font-mono text-xxs text-alert">
+              {app.boardError}
             </div>
-            <div className="text-[13px] text-ink/55">
-              Infinite-canvas schematic viewer for Zener boards
-            </div>
-            <Button variant="copper" size="lg" onClick={() => void pickBoard()}>
-              Open a .zen board
-            </Button>
-            <div className="text-center text-xs text-ink/35">
-              A demo board ships with the repo at{" "}
-              <code className="rounded bg-elev px-[5px] py-px font-mono text-ink/55">
-                examples/demo/top.zen
-              </code>{" "}
-              — or paste a path below.
-            </div>
-            <div className="flex w-full gap-2">
-              <Input
-                mono
-                inputSize="sm"
-                type="text"
-                placeholder="/path/to/board.zen"
-                className="flex-1"
-                value={pastedPath}
-                onChange={(e) => setPastedPath(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && pastedPath.trim()) {
-                    void app.openBoard(pastedPath.trim());
-                  }
-                }}
-              />
-              <Button
-                size="sm"
-                disabled={pastedPath.trim().length === 0}
-                onClick={() => void app.openBoard(pastedPath.trim())}
-              >
-                Open
-              </Button>
-            </div>
-            {app.boardError && (
-              <div className="max-w-[380px] select-text whitespace-pre-wrap font-mono text-xxs text-alert">
-                {app.boardError}
-              </div>
-            )}
-          </Panel>
+          )}
         </div>
       )}
     </div>

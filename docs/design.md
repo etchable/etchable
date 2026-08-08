@@ -92,4 +92,4 @@ star — chrome is small, quiet, and floats on it or recedes beside it.**
 
 ## App icon
 
-A lowercase "e" routed like a copper trace — 45° corners, one continuous stroke, ending in a via — on the navy squircle substrate with a whispered dot grid. The icon is the only place the brand goes dark-navy-dominant; the web canvas stays paper. Source of truth is `packages/ui/icon.svg`; desktop icons and favicons derive from it.
+The wordmark's lowercase "e" — Bricolage Grotesque ExtraBold at display optical size, glyph outline embedded — in black on a clean white squircle with a faint hairline ring. Monochrome on purpose: the icon is typography, and the brand's color belongs to the canvas, not the tile. Source of truth is `packages/ui/icon.svg`; desktop icons (`tauri icon`) and both favicons derive from it. After changing it, `cargo clean -p etchable` so the dev binary re-embeds.

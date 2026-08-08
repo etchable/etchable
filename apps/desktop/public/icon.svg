@@ -1,41 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- etchable app icon: a lowercase "e" routed like a copper trace — 45°
-       corners, one continuous stroke, ending in a via — on the navy
-       substrate (docs/design.md). Source of truth for the desktop icon set
+  <!-- etchable app icon: the wordmark's lowercase "e" (Bricolage Grotesque
+       ExtraBold, opsz 96 — the landing page display face) in black on a
+       clean white squircle. Glyph outline embedded as a path so the icon
+       has no font dependency. Source of truth for the desktop icon set
        (tauri icon) and both favicons. -->
-  <defs>
-    <linearGradient id="substrate" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2d3650"/>
-      <stop offset="1" stop-color="#1c2333"/>
-    </linearGradient>
-    <linearGradient id="copper" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#d98d4d"/>
-      <stop offset="1" stop-color="#b06c31"/>
-    </linearGradient>
-    <!-- the paper canvas dot grid, whispered onto the substrate -->
-    <pattern id="grid" width="104" height="104" patternUnits="userSpaceOnUse">
-      <circle cx="52" cy="52" r="7" fill="#ffffff" opacity="0.05"/>
-    </pattern>
-  </defs>
-
-  <!-- Everything rides one scale wrapper: Apple's grid keeps the squircle
-       at ~81% of the canvas, but most third-party dock icons run larger,
-       so we sit at ~88% to hold visual parity on the dock. -->
   <g transform="translate(512 512) scale(1.0817) translate(-512 -512)">
-
-  <!-- squircle substrate -->
-  <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#substrate)"/>
-  <rect x="96" y="96" width="832" height="832" rx="220" fill="url(#grid)"/>
-
-  <!-- the routed "e": crossbar, bowl, and a 45° tail out of the bottom -->
-  <path
-    d="M 312 488 H 712 V 428 L 596 312 H 428 L 312 428 V 652 L 428 768 H 570 L 640 698"
-    fill="none" stroke="url(#copper)" stroke-width="96"
-    stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- the trace ends in a via -->
-  <circle cx="678" cy="660" r="72" fill="url(#copper)"/>
-  <circle cx="678" cy="660" r="27" fill="#1c2333"/>
-
+    <rect x="96" y="96" width="832" height="832" rx="220" fill="#ffffff"/>
+    <rect x="99" y="99" width="826" height="826" rx="217" fill="none" stroke="#000000" stroke-opacity="0.08" stroke-width="6"/>
+    <path transform="translate(512 512) scale(0.827338 -0.827338) translate(-270.86 -264.00)" fill="#000000" d="M287 -14Q212 -14 161.5 7.5Q111 29 80.0 66.5Q49 104 35.5 152.0Q22 200 22 253Q22 310 36.5 362.0Q51 414 81.5 454.5Q112 495 160.5 518.5Q209 542 277 542Q345 542 393.5 518.5Q442 495 471.0 453.0Q500 411 508.5 356.0Q517 301 506 237L123 231V319L382 324L361 273Q367 319 359.5 350.5Q352 382 332.0 398.5Q312 415 277 415Q240 415 218.0 396.0Q196 377 187.0 342.5Q178 308 178 261Q178 180 205.0 143.0Q232 106 288 106Q312 106 328.0 112.0Q344 118 354.0 129.5Q364 141 368.0 157.5Q372 174 371 195L519 187Q522 154 512.5 119.0Q503 84 477.0 54.0Q451 24 404.5 5.0Q358 -14 287 -14Z"/>
   </g>
 </svg>
