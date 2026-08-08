@@ -41,6 +41,24 @@ pub async fn ensure_session(
         .cloned()
         .context("MCP server not started yet")?;
 
+    // The app's own MCP tools are read-only and response-capped, and
+    // reading/editing files inside the open workspace is the agent's whole
+    // job — the canvas re-renders every edit live, so the review loop is
+    // the canvas itself, not a permission card. Everything else (bash,
+    // anything outside the workspace) still prompts.
+    let scope = |tool: &str| {
+        format!(
+            "{tool}(//{}/**)",
+            cwd.display().to_string().trim_start_matches('/')
+        )
+    };
+    let allowed_tools = vec![
+        "mcp__etchable".to_string(),
+        scope("Read"),
+        scope("Edit"),
+        scope("Write"),
+    ];
+
     let config = agent_host::SpawnConfig {
         claude_bin: std::env::var("ETCHABLE_CLAUDE_BIN")
             .map(Into::into)
@@ -50,6 +68,7 @@ pub async fn ensure_session(
         resume_session_id: resume,
         model: std::env::var("ETCHABLE_MODEL").ok(),
         permission_mode: None,
+        allowed_tools,
         append_system_prompt: Some(SYSTEM_PROMPT_SUFFIX.to_string()),
         partial_messages: true,
     };

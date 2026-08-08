@@ -22,6 +22,11 @@ pub struct SpawnConfig {
     pub model: Option<String>,
     /// `default`, `acceptEdits`, `plan`, `bypassPermissions`.
     pub permission_mode: Option<String>,
+    /// Permission rules passed via `--allowedTools` (same syntax as
+    /// settings.json permissions.allow, e.g. `mcp__etchable`,
+    /// `Read(//abs/path/**)`) — matching tool calls never generate
+    /// `can_use_tool` permission prompts.
+    pub allowed_tools: Vec<String>,
     pub append_system_prompt: Option<String>,
     /// Stream partial assistant text (adds `--include-partial-messages`).
     pub partial_messages: bool,
@@ -36,6 +41,7 @@ impl Default for SpawnConfig {
             resume_session_id: None,
             model: None,
             permission_mode: None,
+            allowed_tools: Vec::new(),
             append_system_prompt: None,
             partial_messages: true,
         }
@@ -95,6 +101,9 @@ impl AgentSession {
         }
         if let Some(mode) = &config.permission_mode {
             cmd.arg("--permission-mode").arg(mode);
+        }
+        if !config.allowed_tools.is_empty() {
+            cmd.arg("--allowedTools").arg(config.allowed_tools.join(","));
         }
         if let Some(prompt) = &config.append_system_prompt {
             cmd.arg("--append-system-prompt").arg(prompt);

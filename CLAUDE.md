@@ -7,6 +7,12 @@ in `apps/desktop`, the landing page/API in `apps/web`, shared design tokens
 and components in `packages/ui` (`@etchable/ui`). pnpm is the only package
 manager (workspace deps use `file:` specs).
 
+Product principles (docs/product.md) that bound design decisions: GUI-first
+AND agent-first (source code is an implementation detail users shouldn't
+need); derivation must be deterministic (same source → same PCB, byte-for-
+byte); every change must persist as a reviewable text diff (a git forge is
+the trajectory).
+
 ## Commands
 
 - `cargo test --workspace` — all Rust tests (fast; pcb deps are cached)
@@ -44,16 +50,43 @@ manager (workspace deps use `file:` specs).
   `SchematicDoc::by_refdes`. This vocabulary is shared by canvas selection,
   MCP tools, and prompts — don't fork it.
 - Webview events: `build-started`, `build-finished` (versioned `BuildView`:
-  `{version, source, schematic, diagnostics, circuit_json, id_map}`,
-  snake_case — bump `BUILD_PAYLOAD_VERSION` in
+  `{version, source, schematic, diagnostics, circuit_json, id_map,
+  source_hash}`, snake_case — bump `BUILD_PAYLOAD_VERSION` in
   `apps/desktop/src-tauri/src/state.rs` AND `apps/desktop/src/types.ts`
   together), `agent-event` (flat tagged union, camelCase — see
   `apps/desktop/src-tauri/src/agent.rs::flatten`). UI mirrors live in
   `apps/desktop/src/types.ts`; keep both sides in sync when touching either.
+- Embedded-agent permissions: sessions spawn with `--allowedTools`
+  auto-allowing the app's own MCP server (`mcp__etchable`) plus `Read`,
+  `Edit`, and `Write` inside the open workspace root — those never show
+  permission cards (the live canvas IS the review loop for edits). Bash
+  and anything outside the workspace still prompt. Wired in
+  `apps/desktop/src-tauri/src/agent.rs::ensure_session`.
+- Drag-to-move persistence: the viewer's edit event triggers the
+  `save_positions` command (save-ALL — every component in one write, which
+  is what keeps the layout's all-or-nothing authored rule a non-issue),
+  guarded by `base_hash` (= `BuildView.source_hash`) optimistic concurrency.
+  `zen_build::write_positions` is the ONLY writer of `# pcb:sch` blocks
+  (merge semantics; never destroys foreign keys like `sym:`). There is no
+  watcher echo-suppression on purpose: the rebuild after a save IS the edit
+  loop's confirmation.
 - The canvas view-model is Circuit JSON emitted by
-  `crates/zen-build/src/circuit_json.rs` — the ONLY module that knows the
-  format (byte-deterministic; every id resolves via `id_map`, never parse ids
-  apart). The only UI module importing tscircuit packages is
+  `crates/zen-build/src/circuit_json.rs` — the ONLY module that serializes
+  the format (byte-deterministic; every id resolves via `id_map`, never parse
+  ids apart). Routing lives in `crates/zen-build/src/route.rs` (pure
+  geometry): local signal nets (≤4 ports, small span) become
+  `schematic_trace` wires, power/ground and far-flung nets keep per-pin net
+  labels. Invariant: each trace's edges form ONE contiguous polyline (the
+  renderer ignores `edge.from` mid-chain), so branching nets emit one main
+  chain + branch chains joined by junction dots — the validator enforces
+  this. Symbol geometry lives in `crates/zen-build/src/symbol_geom.rs`,
+  GENERATED from the pinned schematic-symbols package by
+  `pnpm --filter @etchable/desktop gen:symbol-geom` (CI runs `--check`);
+  emitted glyph ports must reproduce the symbol's native offsets verbatim
+  (symbol coords ARE schematic coords, y-up) or the viewer's angle-matcher
+  silently drops the glyph. Pin-mapping failures fall back to chip boxes —
+  never render a wrong glyph. The only UI module importing tscircuit
+  packages is
   `apps/desktop/src/circuit/`. tscircuit npm deps are pinned exact and bumped
   as a set, then re-validated:
   `cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json | pnpm run --silent validate:circuit-json`.
