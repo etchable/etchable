@@ -1,1 +1,109 @@
 @import "tailwindcss";
+
+@theme {
+  --color-canvas: #fbfaf7;
+  --color-ink: #232b3f;
+  --color-ink-soft: #6c7385;
+  --color-grid: #e6e4dd;
+  --color-copper: #c1783c;
+  --color-copper-deep: #9e5f27;
+  --color-sky: #4d9fff;
+  --color-leaf: #2fbf71;
+  --color-alert: #d64545;
+
+  --font-display: "Bricolage Grotesque", sans-serif;
+  --font-sans: "Karla", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+
+/* The canvas: warm paper with a design-tool dot grid. */
+.canvas-bg {
+  background-color: var(--color-canvas);
+  background-image: radial-gradient(circle, var(--color-grid) 1.5px, transparent 1.5px);
+  background-size: 26px 26px;
+}
+
+/* Selection box: marching ants + corner handles, like a selected object. */
+.selection-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 2px solid var(--color-sky);
+  border-radius: 2px;
+}
+
+/* Marching ants: an SVG rect does the actual animation (border can't). */
+.ants rect {
+  fill: none;
+  stroke: var(--color-sky);
+  stroke-width: 2;
+  stroke-dasharray: 8 6;
+  animation: ants 1.2s linear infinite;
+}
+@keyframes ants {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+/* Drifting collaborator cursors. */
+.cursor-drift-a {
+  animation: drift-a 16s ease-in-out infinite;
+}
+.cursor-drift-b {
+  animation: drift-b 19s ease-in-out infinite;
+}
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  30% {
+    transform: translate(26px, -18px);
+  }
+  65% {
+    transform: translate(-14px, 14px);
+  }
+}
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  40% {
+    transform: translate(-22px, 12px);
+  }
+  75% {
+    transform: translate(16px, -10px);
+  }
+}
+
+/* Copper trace that routes itself in under a word. */
+.marker-stroke path {
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+  animation: draw 0.9s 0.5s ease-out forwards;
+}
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-sky);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ants rect,
+  .cursor-drift-a,
+  .cursor-drift-b {
+    animation: none;
+  }
+  .marker-stroke path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
