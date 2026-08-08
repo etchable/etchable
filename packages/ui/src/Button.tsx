@@ -21,14 +21,25 @@ const SIZE: Record<ButtonSize, string> = {
   lg: "px-6 py-3",
 };
 
+export type ButtonTone = "success" | "danger";
+
+// Tones recolor the quiet variant for confirm/destroy pairs (Allow/Deny,
+// Stop). Copper and ink don't take tones — they already are one.
+const TONE: Record<ButtonTone, string> = {
+  success: "text-[#1f8f53] border-leaf/50",
+  danger: "text-alert border-alert/45",
+};
+
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  tone?: ButtonTone;
 };
 
 export function Button({
   variant = "quiet",
   size = "md",
+  tone,
   className,
   type = "button",
   ...rest
@@ -36,7 +47,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`rounded-full whitespace-nowrap transition disabled:pointer-events-none disabled:opacity-50 ${VARIANT[variant]} ${SIZE[size]} ${className ?? ""}`}
+      className={`rounded-full whitespace-nowrap transition disabled:pointer-events-none disabled:opacity-50 ${VARIANT[variant]} ${SIZE[size]} ${tone ? TONE[tone] : ""} ${className ?? ""}`}
       {...rest}
     />
   );

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button, Spinner } from "@etchable/ui";
 import type { SessionInfo } from "../state";
 import {
   formatResultFooter,
@@ -35,7 +36,7 @@ function ToolRow({ item }: { item: ToolItem }) {
         <span className="tool-name">{displayName}</span>
         {isMcp && <span className="tag-canvas">canvas</span>}
         <span className="tool-preview">{previewInput(item.input)}</span>
-        {!item.result && <span className="spinner" aria-label="running" />}
+        {!item.result && <Spinner />}
         {item.result?.isError && <span className="tool-err-mark">✗</span>}
       </button>
       {open && (
@@ -67,22 +68,22 @@ function PermissionCard({
       </div>
       <pre className="tool-json">{prettyJson(item.input)}</pre>
       <div className="perm-actions">
-        <button
-          type="button"
-          className="btn btn-allow"
+        <Button
+          size="sm"
+          tone="success"
           disabled={answered}
           onClick={() => onRespond(item.requestId, true)}
         >
           Allow
-        </button>
-        <button
-          type="button"
-          className="btn btn-deny"
+        </Button>
+        <Button
+          size="sm"
+          tone="danger"
           disabled={answered}
           onClick={() => onRespond(item.requestId, false)}
         >
           Deny
-        </button>
+        </Button>
         {answered && (
           <span className={"perm-verdict " + (item.verdict === "allowed" ? "ok" : "no")}>
             {item.verdict === "allowed" ? "Allowed" : "Denied"}
@@ -219,33 +220,33 @@ export default function Chat(props: ChatProps) {
               }
             }}
           />
-          <button
-            type="button"
-            className="btn btn-send"
+          <Button
+            variant="copper"
+            size="sm"
             onClick={send}
             disabled={draft.trim().length === 0}
           >
             Send
-          </button>
+          </Button>
         </div>
         <div className="composer-foot">
           {agentRunning ? (
-            <button type="button" className="btn btn-stop" onClick={onInterrupt}>
+            <Button size="sm" tone="danger" onClick={onInterrupt}>
               ■ Stop
-            </button>
+            </Button>
           ) : (
             <span className="composer-hint">Enter to send · Shift+Enter for newline</span>
           )}
           <span className="composer-spacer" />
           {sessionInfo?.model && <span className="composer-model">{sessionInfo.model}</span>}
-          <button
-            type="button"
-            className="btn btn-icon"
+          <Button
+            size="sm"
+            className="px-2.5 text-sm leading-tight"
             title="New session"
             onClick={onNewSession}
           >
             ⊕
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Button, Input, Panel } from "@etchable/ui";
+import { Button, Input, Panel, Spinner } from "@etchable/ui";
 import CircuitCanvas from "./circuit/CircuitCanvas";
 import Chat from "./chat/Chat";
 import Problems from "./problems/Problems";
@@ -78,7 +78,7 @@ export default function App() {
         <span className="toolbar-spacer" />
         {building ? (
           <span className="pill pill-building">
-            <span className="spinner" />
+            <Spinner />
             building…
           </span>
         ) : build ? (

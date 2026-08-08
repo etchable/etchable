@@ -55,41 +55,9 @@ body {
   height: 100%;
 }
 
-/* ---------- buttons & inputs ----------
-   Toolbar and empty-state controls use the shared <Button>/<Input>;
-   .btn survives for the chat's specialized controls (allow/deny/stop),
-   styled to match the shared quiet variant. */
-
-.btn {
-  appearance: none;
-  background: var(--bg-panel);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 4px 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 0.12s;
-}
-
-.btn:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.btn-icon {
-  padding: 2px 10px;
-  font-size: 14px;
-  line-height: 1.2;
-}
+/* ---------- inputs ----------
+   All buttons come from the shared <Button> (@etchable/ui); the composer
+   textarea is the one control with no shared counterpart. */
 
 .composer-input {
   background: var(--bg-input);
@@ -170,23 +138,6 @@ body {
 
 .pill-building {
   color: var(--dim);
-}
-
-.spinner {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  border-radius: 50%;
-  border: 1.5px solid var(--line);
-  border-top-color: var(--copper);
-  animation: spin 0.8s linear infinite;
-  display: inline-block;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .error-strip {
@@ -649,11 +600,6 @@ body {
   font-size: 11px;
 }
 
-.tool-head .spinner {
-  width: 9px;
-  height: 9px;
-}
-
 .tool-body {
   border-top: 1px solid var(--line-soft);
   padding: 7px 9px;
@@ -712,16 +658,6 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.btn-allow {
-  color: #1f8f53;
-  border-color: rgba(47, 191, 113, 0.5);
-}
-
-.btn-deny {
-  color: var(--red);
-  border-color: rgba(214, 69, 69, 0.45);
 }
 
 .perm-verdict {
@@ -822,12 +758,6 @@ body {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--faint);
-}
-
-.btn-stop {
-  color: var(--red);
-  border-color: rgba(214, 69, 69, 0.45);
-  font-size: 11px;
 }
 
 /* ---------- problems ---------- */
