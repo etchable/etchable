@@ -1,0 +1,75 @@
+name: release-app
+
+# Builds, signs, and notarizes the macOS app on every version tag and
+# attaches the .dmg to a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Write the App Store Connect API key
+        # The secret comes in via env (not inlined in the command) and is stored
+        # base64-encoded — single-line base64 is masked reliably; a multi-line
+        # PEM is not. The file lands in RUNNER_TEMP, which is wiped after the job.
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc/AuthKey.p8"
+
+      - name: Build & release the app
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "etchable ${{ github.ref_name }}"
+          releaseDraft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS Developer ID signing + notarization.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
+
+      # tauri-action notarizes and staples the .app, but not the .dmg itself.
+      # Notarize + staple the .dmg so a directly-downloaded copy verifies
+      # offline, then re-upload it.
+      - name: Notarize & staple the .dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          dmg="apps/desktop/src-tauri/target/release/bundle/dmg/etchable_${version}_aarch64.dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$RUNNER_TEMP/asc/AuthKey.p8" \
+            --key-id "${{ secrets.APPLE_API_KEY }}" \
+            --issuer "${{ secrets.APPLE_API_ISSUER }}" \
+            --wait
+          xcrun stapler staple "$dmg"
+          gh release upload "$GITHUB_REF_NAME" "$dmg" --clobber
