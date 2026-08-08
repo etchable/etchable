@@ -29,6 +29,9 @@ dist-ssr
 # pcb package cache vendored next to boards
 .pcb/
 
+# kicad editor lock files
+*.lck
+
 # rust
 /target
 

@@ -52,6 +52,15 @@ Three loops:
 | `mcp` | Localhost MCP server (streamable HTTP, hand-rolled JSON-RPC on axum). Response-size discipline throughout: scoped, capped, summarized — a context-flooded agent is worse than no tool. |
 | `desktop` | Tauri app: shared state, single builder task, fs watcher, command surface, event fanout. |
 
+## Also in this repo
+
+- `apps/web` — etchable.net landing page + API on Cloudflare Workers,
+  deployed by `.github/workflows/deploy-web.yml`.
+- `apps/desktop` — the original Tauri scaffold; the macOS release pipeline
+  (`release-app.yml`, Homebrew cask) still builds from here. Day-to-day
+  development happens in `crates/` + `ui/` at the repo root; consolidating
+  the two is pending.
+
 ## Setup
 
 Requirements: Rust (≥ 1.88), Node 20+, and the `claude` CLI on `PATH`
