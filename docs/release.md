@@ -74,6 +74,21 @@ Then run **bump-release** from the Actions tab with `patch` to cut `v0.1.1`. Wat
 spctl -a -t open --context context:primary-signature -v etchable_0.1.1_aarch64.dmg
 ```
 
+## Website deploys (`CLOUDFLARE_API_TOKEN`)
+
+`deploy-web.yml` deploys the site to Cloudflare on every push to `main` that touches `apps/web`. It runs in the `deploy` environment and needs one secret there:
+
+1. Go to <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → start from the **Edit Cloudflare Workers** template.
+2. Scope it: Account Resources → the account holding `etchable.net` ("pcb"), Zone Resources → `etchable.net`.
+3. Add one extra permission: **Account → D1 → Edit** (for migrations).
+4. Save the token into the `deploy` environment:
+
+```sh
+gh secret set CLOUDFLARE_API_TOKEN --env deploy --repo etchable/etchable
+```
+
+The workflow records a D1 time-travel bookmark before each migration run; restore with `npx wrangler d1 time-travel restore etchable-web --bookmark=<from the logs>` within 30 days.
+
 ## Troubleshooting
 
 - **bump-release pushes but no release build starts** — the GitHub App isn't installed on this repo, or the workflow fell back to `GITHUB_TOKEN`. Check the "Generate GitHub App token" step.
