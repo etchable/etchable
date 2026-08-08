@@ -2,7 +2,7 @@
 
 // ---- Build data (snake_case, from "build-finished" event / get_state) ----
 
-/// Bump in lockstep with crates/desktop/src/state.rs::BUILD_PAYLOAD_VERSION.
+/// Bump in lockstep with apps/desktop/src-tauri/src/state.rs::BUILD_PAYLOAD_VERSION.
 export const BUILD_PAYLOAD_VERSION = 2;
 
 /// A Circuit JSON element (tscircuit's intermediary format). Kept opaque —

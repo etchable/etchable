@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          dmg="apps/desktop/src-tauri/target/release/bundle/dmg/etchable_${version}_aarch64.dmg"
+          dmg="target/release/bundle/dmg/etchable_${version}_aarch64.dmg"
           xcrun notarytool submit "$dmg" \
             --key "$RUNNER_TEMP/asc/AuthKey.p8" \
             --key-id "${{ secrets.APPLE_API_KEY }}" \
@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          dmg="apps/desktop/src-tauri/target/release/bundle/dmg/etchable_${version}_aarch64.dmg"
+          dmg="target/release/bundle/dmg/etchable_${version}_aarch64.dmg"
           sha="$(shasum -a 256 "$dmg" | awk '{print $1}')"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/etchable/homebrew-etchable.git" tap
           mkdir -p tap/Casks

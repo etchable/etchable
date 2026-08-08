@@ -1,61 +1,7 @@
-import {
-  useEffect,
-  useState,
-  type CSSProperties,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { Button, Chip, Cursor, Input, Panel, SelectionBox } from "@etchable/ui";
 import { api } from "./lib/api";
 import { authClient } from "./lib/auth-client";
-
-function Cursor({
-  name,
-  color,
-  className,
-}: {
-  name: string;
-  color: string;
-  className?: string;
-}) {
-  return (
-    <div className={`pointer-events-none absolute ${className ?? ""}`} aria-hidden>
-      <svg width="20" height="20" viewBox="0 0 20 20">
-        <path
-          d="M3 1l5.5 15 2.2-6.3L17 7.5z"
-          fill={color}
-          stroke="#fff"
-          strokeWidth="1.5"
-        />
-      </svg>
-      <span
-        className="ml-3 rounded-full px-2 py-0.5 font-mono text-xs text-white"
-        style={{ backgroundColor: color }}
-      >
-        {name}
-      </span>
-    </div>
-  );
-}
-
-function SelectionBox({ children }: { children: ReactNode }) {
-  const handles = [
-    "-top-[5px] -left-[5px]",
-    "-top-[5px] -right-[5px]",
-    "-bottom-[5px] -left-[5px]",
-    "-bottom-[5px] -right-[5px]",
-  ];
-  return (
-    <div className="relative inline-block px-8 py-4 sm:px-12 sm:py-6">
-      <svg className="ants absolute inset-0 h-full w-full" aria-hidden>
-        <rect x="1" y="1" width="calc(100% - 2px)" height="calc(100% - 2px)" rx="2" />
-      </svg>
-      {handles.map((pos) => (
-        <span key={pos} className={`selection-handle ${pos}`} aria-hidden />
-      ))}
-      {children}
-    </div>
-  );
-}
 
 function EtchWithTrace() {
   return (
@@ -157,22 +103,18 @@ function WaitlistForm() {
         <label htmlFor="waitlist-email" className="sr-only">
           Email address
         </label>
-        <input
+        <Input
           id="waitlist-email"
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          className="min-w-0 flex-1 rounded-full border-2 border-ink/15 bg-white px-5 py-3 text-ink placeholder-ink-soft/60 outline-none transition focus:border-sky"
+          className="flex-1"
         />
-        <button
-          type="submit"
-          disabled={status === "sending"}
-          className="rounded-full bg-copper px-6 py-3 font-bold text-white shadow-[0_3px_0_var(--color-copper-deep)] transition hover:-translate-y-0.5 hover:shadow-[0_5px_0_var(--color-copper-deep)] active:translate-y-0 active:shadow-[0_2px_0_var(--color-copper-deep)] disabled:opacity-50"
-        >
+        <Button type="submit" variant="copper" size="lg" disabled={status === "sending"}>
           {status === "sending" ? "Joining…" : "Join the waitlist"}
-        </button>
+        </Button>
       </form>
       {total !== null && total > 0 && (
         <p className="font-mono text-xs text-ink-soft">
@@ -196,7 +138,7 @@ function AuthChip({
 
   if (session) {
     return (
-      <div className="flex items-center gap-2 rounded-full border border-grid bg-white py-1.5 pr-3 pl-4 text-sm shadow-sm">
+      <Chip className="py-1.5 pr-3 pl-4 text-sm">
         <span>
           Hey, <span className="font-bold">{session.user.name}</span>{" "}
           <span aria-hidden>✏️</span>
@@ -207,18 +149,14 @@ function AuthChip({
         >
           Sign out
         </button>
-      </div>
+      </Chip>
     );
   }
 
   return (
-    <button
-      onClick={onToggle}
-      className="rounded-full border border-grid bg-white px-4 py-1.5 text-sm font-medium shadow-sm transition hover:border-sky"
-      aria-expanded={open}
-    >
+    <Button onClick={onToggle} aria-expanded={open}>
       {open ? "Close" : "Sign in"}
-    </button>
+    </Button>
   );
 }
 
@@ -247,13 +185,11 @@ function AuthPanel() {
     setBusy(false);
   };
 
-  const field =
-    "rounded-xl border-2 border-ink/10 bg-white px-4 py-2.5 text-ink placeholder-ink-soft/60 outline-none transition focus:border-sky";
-
   return (
-    <form
+    <Panel
+      as="form"
       onSubmit={submit}
-      className="flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-grid bg-white p-6 shadow-[0_2px_12px_rgba(33,36,46,0.06)]"
+      className="flex w-full max-w-sm flex-col gap-3 p-6"
     >
       <div className="flex gap-1 self-start rounded-full bg-canvas p-1">
         {(["signup", "signin"] as const).map((m) => (
@@ -272,40 +208,39 @@ function AuthPanel() {
         ))}
       </div>
       {mode === "signup" && (
-        <input
+        <Input
+          variant="field"
+          inputSize="md"
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Your name"
-          className={field}
         />
       )}
-      <input
+      <Input
+        variant="field"
+        inputSize="md"
         type="email"
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
-        className={field}
       />
-      <input
+      <Input
+        variant="field"
+        inputSize="md"
         type="password"
         required
         minLength={8}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Password (8+ characters)"
-        className={field}
       />
       {error && <p className="text-sm text-alert">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy}
-        className="rounded-xl bg-ink px-4 py-2.5 font-bold text-white transition hover:bg-ink/85 disabled:opacity-50"
-      >
+      <Button type="submit" variant="ink" size="lg" disabled={busy}>
         {busy ? "One sec…" : mode === "signup" ? "Create account" : "Sign in"}
-      </button>
-    </form>
+      </Button>
+    </Panel>
   );
 }
 

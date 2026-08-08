@@ -125,7 +125,7 @@ upgrade piecemeal — bump the whole set and re-run the validation harness.
 
 ## Validation record (T2)
 
-- `ui/tools/validate-circuit-json.mjs` checks emitter output against the
+- `apps/desktop/tools/validate-circuit-json.mjs` checks emitter output against the
   published circuit-json zod schemas + id_map completeness + symbol_name
   validity; wired into `.github/workflows/ci.yml`.
 - Smoke check board: **examples/demo/top.zen** (50 elements). Rendered via

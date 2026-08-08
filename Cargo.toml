@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
-# apps/desktop/src-tauri is its own crate (built by release-app.yml); without
-# this exclude, cargo refuses to build it from inside this workspace tree.
-exclude = ["apps"]
+members = ["crates/*", "apps/desktop/src-tauri"]
 
 [workspace.package]
 version = "0.1.1"

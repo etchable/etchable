@@ -28,10 +28,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Vendor the Zener stdlib
         run: ./scripts/fetch-stdlib.sh
@@ -41,10 +42,10 @@ jobs:
 
       - name: Frontend typecheck + build
         run: |
-          npm ci
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm --filter @etchable/desktop build
 
       - name: Validate circuit-json emission against published schemas
         run: |
           cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json --offline \
-            | npm run --silent validate:circuit-json
+            | pnpm run --silent validate:circuit-json

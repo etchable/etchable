@@ -6,7 +6,7 @@
 // real schematic-symbols key. Reads a file path argv[1] or stdin.
 //
 //   cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json \
-//     | node ui/tools/validate-circuit-json.mjs
+//     | node tools/validate-circuit-json.mjs
 
 import { readFileSync } from "node:fs";
 import { any_circuit_element } from "circuit-json";
