@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::model::{BuildOutput, InstanceDoc, InstanceKind, PinDoc, SchematicDoc};
+use crate::layout::{compute_layout, last_segment, split_pins, Side, MODULE_TITLE_H, PIN_SPACING};
+use crate::symbol_geom::{self, SymGeom};
 
 /// Elements + id map. `elements` is a Circuit JSON document (an array of
 /// tagged objects) ready for `@tscircuit/schematic-viewer` / `circuit-to-svg`.
@@ -43,53 +45,118 @@ pub fn to_circuit_json(out: &BuildOutput) -> CircuitJsonDoc {
 // Geometry constants (tscircuit schematic units; ~1 unit per passive symbol)
 // ---------------------------------------------------------------------------
 
-const PIN_SPACING: f64 = 0.2;
-const CHIP_MIN_W: f64 = 1.2;
-const CHIP_MIN_H: f64 = 0.6;
-const MODULE_PAD: f64 = 0.5;
-const MODULE_TITLE_H: f64 = 0.3;
-/// Sibling spacing must clear two net-label flags extending toward each
-/// other (~1 unit each for typical net names).
-const GAP: f64 = 2.4;
 const NET_LABEL_OFFSET: f64 = 0.1;
-/// Authored `# pcb:sch` coordinates are in the pcb layout tool's mm-ish
-/// space; dividing by 25.4 lands boards in the same magnitude as computed
-/// layout.
-const AUTHORED_DIVISOR: f64 = 25.4;
 
+/// How component pins map onto a symbol's ports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SymbolKind {
-    Resistor,
-    Capacitor,
-    Led,
-    Diode,
-    Inductor,
+pub(crate) enum MapStrategy {
+    /// 1-2 pins: LEFTY/RIGHTY split -> symbol ports labeled "1" / "2".
+    TwoPin,
+    /// 3+ pins: pin names match symbol port labels (with aliases); any
+    /// unmapped pin falls the component back to a chip.
+    Labeled,
 }
 
-impl SymbolKind {
-    /// (width, height, pin offset from center) of the schematic-symbols glyph.
-    fn geom(self) -> (f64, f64, f64) {
-        match self {
-            SymbolKind::Resistor | SymbolKind::Capacitor => (0.6, 0.65, 0.3),
-            SymbolKind::Led => (1.13, 0.65, 0.54),
-            SymbolKind::Diode => (1.04, 0.54, 0.52),
-            SymbolKind::Inductor => (1.06, 0.46, 0.53),
-        }
-    }
+/// A candidate glyph: the schematic-symbols base name plus how to map pins.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SymbolChoice {
+    pub(crate) base: &'static str,
+    pub(crate) strategy: MapStrategy,
+}
 
-    fn symbol_base(self) -> &'static str {
-        match self {
-            SymbolKind::Resistor => "boxresistor",
-            SymbolKind::Capacitor => "capacitor",
-            SymbolKind::Led => "led",
-            SymbolKind::Diode => "diode",
-            SymbolKind::Inductor => "inductor",
-        }
+/// A fully resolved glyph for one component at one orientation: the concrete
+/// `symbol_name`, its generated geometry, and for each symbol port (in the
+/// variant's own order) the index of the component pin attached to it.
+pub(crate) struct ResolvedGlyph {
+    pub(crate) name: String,
+    pub(crate) geom: &'static SymGeom,
+    pub(crate) pin_for_port: Vec<usize>,
+}
+
+/// Pick the variant for an orientation, falling back to the horz/vert axes
+/// that many bases (zener, fuse, mosfets, ...) ship instead of all four.
+fn resolve_variant(base: &str, orient: Orient) -> Option<(String, &'static SymGeom)> {
+    let primary = format!("{base}_{}", orient.suffix());
+    if let Some(geom) = symbol_geom::lookup(&primary) {
+        return Some((primary, geom));
+    }
+    let axis = match orient {
+        Orient::Right | Orient::Left => "horz",
+        Orient::Up | Orient::Down => "vert",
+    };
+    let alt = format!("{base}_{axis}");
+    symbol_geom::lookup(&alt).map(|geom| (alt, geom))
+}
+
+/// Normalize a pin name / port label for `Labeled` matching.
+fn pin_key(name: &str) -> String {
+    let lower = name.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "c" | "collector" => "collector".into(),
+        "b" | "base" => "base".into(),
+        "e" | "emitter" => "emitter".into(),
+        "d" | "drain" => "drain".into(),
+        "g" | "gate" => "gate".into(),
+        "s" | "source" => "source".into(),
+        "+" | "in+" | "inp" | "inp1" => "inp1".into(),
+        "-" | "in-" | "inn" | "inp2" => "inp2".into(),
+        "o" | "out" | "output" => "out".into(),
+        other => other.into(),
     }
 }
 
+/// Resolve a component's glyph at an orientation, or `None` -> chip fallback
+/// (never render a wrong glyph).
+pub(crate) fn resolve_glyph(inst: &InstanceDoc, choice: SymbolChoice, orient: Orient) -> Option<ResolvedGlyph> {
+    let (name, geom) = resolve_variant(choice.base, orient)?;
+    let port_with_label = |label: &str| {
+        geom.ports
+            .iter()
+            .position(|p| p.labels.iter().any(|l| l.eq_ignore_ascii_case(label)))
+    };
+    let mut pin_for_port = vec![usize::MAX; geom.ports.len()];
+    match choice.strategy {
+        MapStrategy::TwoPin => {
+            let (left, right) = split_pins(&inst.pins);
+            let ordered: Vec<&PinDoc> = left.iter().chain(right.iter()).collect();
+            if ordered.len() != geom.ports.len() {
+                return None;
+            }
+            for (i, pin) in ordered.iter().enumerate() {
+                let port = port_with_label(&(i + 1).to_string())?;
+                let idx = inst.pins.iter().position(|p| p.name == pin.name)?;
+                pin_for_port[port] = idx;
+            }
+        }
+        MapStrategy::Labeled => {
+            if inst.pins.len() != geom.ports.len() {
+                return None;
+            }
+            for (idx, pin) in inst.pins.iter().enumerate() {
+                let key = pin_key(&pin.name);
+                let port = geom
+                    .ports
+                    .iter()
+                    .position(|p| p.labels.iter().any(|l| pin_key(l) == key))?;
+                if pin_for_port[port] != usize::MAX {
+                    return None; // two pins matched one port
+                }
+                pin_for_port[port] = idx;
+            }
+        }
+    }
+    if pin_for_port.contains(&usize::MAX) {
+        return None;
+    }
+    Some(ResolvedGlyph {
+        name,
+        geom,
+        pin_for_port,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Orient {
+pub(crate) enum Orient {
     Right,
     Up,
     Left,
@@ -97,7 +164,7 @@ enum Orient {
 }
 
 impl Orient {
-    fn from_rotation(deg: f64) -> Orient {
+    pub(crate) fn from_rotation(deg: f64) -> Orient {
         // Snap to the nearest quarter turn; symbol variants are the only
         // rotation circuit-json supports.
         match (((deg.round() as i64 % 360) + 360) % 360 + 45) / 90 % 4 {
@@ -108,7 +175,7 @@ impl Orient {
         }
     }
 
-    fn suffix(self) -> &'static str {
+    pub(crate) fn suffix(self) -> &'static str {
         match self {
             Orient::Right => "right",
             Orient::Up => "up",
@@ -121,41 +188,6 @@ impl Orient {
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
-
-/// Natural, case-insensitive ordering ("P2" < "P10"), mirroring the previous
-/// TS canvas so layouts stay familiar.
-fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let (ab, bb) = (a.as_bytes(), b.as_bytes());
-    let (mut i, mut j) = (0, 0);
-    while i < ab.len() && j < bb.len() {
-        let (ca, cb) = (ab[i], bb[j]);
-        if ca.is_ascii_digit() && cb.is_ascii_digit() {
-            let si = i;
-            while i < ab.len() && ab[i].is_ascii_digit() {
-                i += 1;
-            }
-            let sj = j;
-            while j < bb.len() && bb[j].is_ascii_digit() {
-                j += 1;
-            }
-            let na: u64 = a[si..i].parse().unwrap_or(u64::MAX);
-            let nb: u64 = b[sj..j].parse().unwrap_or(u64::MAX);
-            match na.cmp(&nb) {
-                std::cmp::Ordering::Equal => {}
-                other => return other,
-            }
-        } else {
-            match ca.to_ascii_lowercase().cmp(&cb.to_ascii_lowercase()) {
-                std::cmp::Ordering::Equal => {
-                    i += 1;
-                    j += 1;
-                }
-                other => return other,
-            }
-        }
-    }
-    ab.len().cmp(&bb.len()).then_with(|| a.cmp(b))
-}
 
 /// Parse "1k", "4.7u", "100", "2.2meg", "0.1uF", "1kohm" into a plain number.
 fn parse_electrical_value(raw: &str) -> Option<f64> {
@@ -191,437 +223,98 @@ fn attr_str<'a>(inst: &'a InstanceDoc, key: &str) -> Option<&'a str> {
     inst.attributes.get(key).and_then(Value::as_str)
 }
 
-fn last_segment(path: &str) -> &str {
-    path.rsplit('.').next().unwrap_or(path)
-}
-
 // ---------------------------------------------------------------------------
 // Component classification
 // ---------------------------------------------------------------------------
 
-struct CompClass {
-    /// `Some` = draw the schematic-symbols glyph; `None` = box-with-pins chip.
-    symbol: Option<SymbolKind>,
+pub(crate) struct CompClass {
+    /// `Some` = try the schematic-symbols glyph; `None` = box-with-pins chip.
+    /// A glyph choice can still fall back to a chip when pin mapping fails.
+    pub(crate) symbol: Option<SymbolChoice>,
     ftype: &'static str,
     /// (field name, parsed value) for ftypes with a required numeric field.
     numeric: Option<(&'static str, f64)>,
 }
 
-fn classify(inst: &InstanceDoc) -> CompClass {
-    let chip = CompClass {
-        symbol: None,
-        ftype: "simple_chip",
-        numeric: None,
+const CHIP: CompClass = CompClass {
+    symbol: None,
+    ftype: "simple_chip",
+    numeric: None,
+};
+
+pub(crate) fn classify(inst: &InstanceDoc) -> CompClass {
+    let Some(ty) = attr_str(inst, "type") else {
+        return CHIP;
     };
-    if inst.pins.len() != 2 {
-        return chip;
-    }
+    let n = inst.pins.len();
     let parsed = |key: &str| {
         attr_str(inst, key)
             .or_else(|| attr_str(inst, "value"))
             .and_then(parse_electrical_value)
     };
-    match attr_str(inst, "type") {
-        Some("resistor") => match parsed("resistance") {
+    let two_pin = |base: &'static str, ftype: &'static str| CompClass {
+        symbol: Some(SymbolChoice {
+            base,
+            strategy: MapStrategy::TwoPin,
+        }),
+        ftype,
+        numeric: None,
+    };
+    let labeled = |base: &'static str| CompClass {
+        symbol: Some(SymbolChoice {
+            base,
+            strategy: MapStrategy::Labeled,
+        }),
+        ftype: "simple_chip",
+        numeric: None,
+    };
+    // R/C/L glyphs require a parseable value (the glyph shows it); the rest
+    // draw fine without one. Unknown types and pin-count mismatches are chips.
+    match (ty, n) {
+        ("resistor", 2) => match parsed("resistance") {
             Some(v) => CompClass {
-                symbol: Some(SymbolKind::Resistor),
-                ftype: "simple_resistor",
                 numeric: Some(("resistance", v)),
+                ..two_pin("boxresistor", "simple_resistor")
             },
-            None => chip,
+            None => CHIP,
         },
-        Some("capacitor") => match parsed("capacitance") {
+        ("capacitor", 2) => match parsed("capacitance") {
             Some(v) => CompClass {
-                symbol: Some(SymbolKind::Capacitor),
-                ftype: "simple_capacitor",
                 numeric: Some(("capacitance", v)),
+                ..two_pin("capacitor", "simple_capacitor")
             },
-            None => chip,
+            None => CHIP,
         },
-        Some("inductor") => match parsed("inductance") {
+        ("inductor", 2) => match parsed("inductance") {
             Some(v) => CompClass {
-                symbol: Some(SymbolKind::Inductor),
-                ftype: "simple_inductor",
                 numeric: Some(("inductance", v)),
+                ..two_pin("inductor", "simple_inductor")
             },
-            None => chip,
+            None => CHIP,
         },
-        Some("led") => CompClass {
-            symbol: Some(SymbolKind::Led),
-            ftype: "simple_led",
-            numeric: None,
-        },
-        Some("diode") => CompClass {
-            symbol: Some(SymbolKind::Diode),
-            ftype: "simple_diode",
-            numeric: None,
-        },
-        _ => chip,
+        ("led", 2) => two_pin("led", "simple_led"),
+        ("diode", 2) => two_pin("diode", "simple_diode"),
+        // TVS has no glyph of its own; the bidirectional-zener reading is the
+        // conventional approximation.
+        ("zener" | "tvs", 2) => two_pin("zener_diode", "simple_diode"),
+        ("rectifier", 2) => two_pin("rectifier_diode", "simple_diode"),
+        ("schottky", 2) => two_pin("schottky_diode", "simple_diode"),
+        ("crystal", 2) => two_pin("crystal", "simple_chip"),
+        ("ferrite_bead", 2) => two_pin("ferrite_bead", "simple_chip"),
+        // No thermistor glyph exists; a resistor box beats an anonymous chip.
+        ("thermistor", 2) => two_pin("boxresistor", "simple_chip"),
+        ("fuse", 2) => two_pin("fuse", "simple_chip"),
+        ("potentiometer", 2) => two_pin("potentiometer", "simple_chip"),
+        ("battery", 2) => two_pin("battery", "simple_chip"),
+        ("testpoint", 1) => two_pin("testpoint", "simple_chip"),
+        ("npn", 3) => labeled("npn_bipolar_transistor"),
+        ("pnp", 3) => labeled("pnp_bipolar_transistor"),
+        ("nfet" | "mosfet", 3) => labeled("n_channel_e_mosfet_transistor"),
+        ("pfet", 3) => labeled("p_channel_e_mosfet_transistor"),
+        ("opamp", 3) => labeled("opamp_no_power"),
+        ("opamp", 5) => labeled("opamp_with_power"),
+        _ => CHIP,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Pin arrangement (port of the TS canvas splitPins)
-// ---------------------------------------------------------------------------
-
-const LEFTY: [&str; 7] = ["1", "A", "P1", "+", "IN", "VIN", "L"];
-const RIGHTY: [&str; 6] = ["2", "K", "P2", "-", "OUT", "VOUT"];
-
-fn split_pins(pins: &[PinDoc]) -> (Vec<PinDoc>, Vec<PinDoc>) {
-    if pins.len() <= 1 {
-        return (pins.to_vec(), Vec::new());
-    }
-    if pins.len() == 2 {
-        let score = |p: &PinDoc| {
-            let u = p.name.to_uppercase();
-            if LEFTY.contains(&u.as_str()) {
-                0
-            } else if RIGHTY.contains(&u.as_str()) {
-                2
-            } else {
-                1
-            }
-        };
-        let mut sorted = pins.to_vec();
-        sorted.sort_by(|a, b| score(a).cmp(&score(b)).then_with(|| natural_cmp(&a.name, &b.name)));
-        let right = sorted.split_off(1);
-        return (sorted, right);
-    }
-    let mut sorted = pins.to_vec();
-    sorted.sort_by(|a, b| natural_cmp(&a.name, &b.name));
-    let right = sorted.split_off(sorted.len().div_ceil(2));
-    (sorted, right)
-}
-
-// ---------------------------------------------------------------------------
-// Layout pass. All math in world coordinates (y grows downward, like the old
-// canvas); emission flips y once so schematic space reads y-up.
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Side {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone)]
-struct PinLayout {
-    name: String,
-    net: Option<String>,
-    number: u32,
-    /// World position of the port.
-    x: f64,
-    y: f64,
-    side: Side,
-}
-
-#[derive(Debug, Clone)]
-struct CompLayout {
-    center: (f64, f64),
-    size: (f64, f64),
-    orient: Orient,
-    pins: Vec<PinLayout>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Rect {
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-}
-
-struct Layout {
-    comps: BTreeMap<String, CompLayout>,
-    /// Module path -> world bounding box (root excluded).
-    modules: BTreeMap<String, Rect>,
-}
-
-struct SizedNode {
-    path: String,
-    w: f64,
-    h: f64,
-    kids: Vec<SizedNode>,
-    offsets: Vec<(f64, f64)>,
-    comp: Option<(CompClass, Vec<PinDoc>, Vec<PinDoc>)>, // class, left, right
-}
-
-fn drawable_children<'a>(
-    sch: &'a SchematicDoc,
-    inst: &'a InstanceDoc,
-) -> Vec<(&'a str, &'a InstanceDoc)> {
-    let mut out: Vec<(&str, &InstanceDoc)> = inst
-        .children
-        .iter()
-        .filter_map(|(name, child_path)| {
-            sch.instances.get(child_path).and_then(|c| {
-                matches!(c.kind, InstanceKind::Component | InstanceKind::Module)
-                    .then_some((name.as_str(), c))
-            })
-        })
-        .collect();
-    out.sort_by(|a, b| {
-        let ga = (a.1.kind != InstanceKind::Component) as u8;
-        let gb = (b.1.kind != InstanceKind::Component) as u8;
-        ga.cmp(&gb).then_with(|| natural_cmp(a.0, b.0))
-    });
-    out
-}
-
-fn size_node(sch: &SchematicDoc, inst: &InstanceDoc) -> SizedNode {
-    if inst.kind == InstanceKind::Component {
-        let class = classify(inst);
-        let (left, right) = split_pins(&inst.pins);
-        let (w, h) = match class.symbol {
-            Some(sym) => {
-                let (w, h, _) = sym.geom();
-                (w, h)
-            }
-            None => {
-                let max_side = left.len().max(right.len()).max(1) as f64;
-                let label = |pins: &[PinDoc]| pins.iter().map(|p| p.name.len()).max().unwrap_or(0);
-                let w = CHIP_MIN_W.max(0.8 + 0.1 * (label(&left) + label(&right)) as f64);
-                let h = CHIP_MIN_H.max(max_side * PIN_SPACING + 0.4);
-                (w, h)
-            }
-        };
-        return SizedNode {
-            path: inst.path.clone(),
-            w,
-            h,
-            kids: Vec::new(),
-            offsets: Vec::new(),
-            comp: Some((class, left, right)),
-        };
-    }
-
-    let kids: Vec<SizedNode> = drawable_children(sch, inst)
-        .into_iter()
-        .map(|(_, c)| size_node(sch, c))
-        .collect();
-
-    // Pack children into rows targeting a near-square aspect.
-    let n = kids.len();
-    let cols = (n as f64).sqrt().ceil().max(1.0) as usize;
-    let mut offsets = Vec::with_capacity(n);
-    let mut inner_w: f64 = 0.0;
-    let mut cursor_y = 0.0;
-    let mut r = 0;
-    while r * cols < n {
-        let row = &kids[r * cols..(r * cols + cols).min(n)];
-        let row_h = row.iter().map(|k| k.h).fold(0.0, f64::max);
-        let mut cursor_x = 0.0;
-        for kid in row {
-            offsets.push((cursor_x, cursor_y + (row_h - kid.h) / 2.0));
-            cursor_x += kid.w + GAP;
-        }
-        inner_w = inner_w.max(cursor_x - GAP);
-        cursor_y += row_h + GAP;
-        r += 1;
-    }
-    let inner_h = if n > 0 { cursor_y - GAP } else { 0.0 };
-
-    let title_w = 0.12 * last_segment(&inst.path).len() as f64 + 0.5;
-    SizedNode {
-        path: inst.path.clone(),
-        w: (inner_w + 2.0 * MODULE_PAD).max(title_w).max(1.2),
-        h: MODULE_TITLE_H + MODULE_PAD + inner_h.max(0.3) + MODULE_PAD,
-        kids,
-        offsets,
-        comp: None,
-    }
-}
-
-fn place(node: &SizedNode, x: f64, y: f64, is_root: bool, out: &mut Layout) {
-    if let Some((_, left, right)) = &node.comp {
-        let center = (x + node.w / 2.0, y + node.h / 2.0);
-        out.comps.insert(
-            node.path.clone(),
-            comp_layout_at(center, (node.w, node.h), Orient::Right, left, right),
-        );
-        return;
-    }
-    if !is_root {
-        out.modules.insert(
-            node.path.clone(),
-            Rect {
-                x,
-                y,
-                w: node.w,
-                h: node.h,
-            },
-        );
-    }
-    let (ox, oy) = if is_root {
-        (x, y)
-    } else {
-        (x + MODULE_PAD, y + MODULE_TITLE_H + MODULE_PAD)
-    };
-    for (kid, off) in node.kids.iter().zip(&node.offsets) {
-        place(kid, ox + off.0, oy + off.1, false, out);
-    }
-}
-
-/// Pin world positions for a component at `center`, honoring symbol port
-/// geometry for glyph components and even edge spacing for chips.
-fn comp_layout_at(
-    center: (f64, f64),
-    size: (f64, f64),
-    orient: Orient,
-    left: &[PinDoc],
-    right: &[PinDoc],
-) -> CompLayout {
-    let mut pins = Vec::with_capacity(left.len() + right.len());
-    let two_pin_symbol = left.len() == 1 && right.len() == 1;
-    if two_pin_symbol {
-        // Symbol port offset: half the span between glyph ports.
-        let dx = size.0 / 2.0;
-        // Pin 1 sits opposite the orientation direction (a "right"-facing
-        // resistor reads 1 -> 2 left-to-right).
-        let (p1, p2): ((f64, f64), (f64, f64)) = match orient {
-            Orient::Right => ((-dx, 0.0), (dx, 0.0)),
-            Orient::Left => ((dx, 0.0), (-dx, 0.0)),
-            Orient::Up => ((0.0, dx), (0.0, -dx)),
-            Orient::Down => ((0.0, -dx), (0.0, dx)),
-        };
-        for (i, (pin, off)) in [(&left[0], p1), (&right[0], p2)].iter().enumerate() {
-            pins.push(PinLayout {
-                name: pin.name.clone(),
-                net: pin.net.clone(),
-                number: i as u32 + 1,
-                x: center.0 + off.0,
-                y: center.1 + off.1,
-                side: if off.0 <= 0.0 { Side::Left } else { Side::Right },
-            });
-        }
-    } else {
-        let (x0, y0) = (center.0 - size.0 / 2.0, center.1 - size.1 / 2.0);
-        let mut number = 1u32;
-        for (side, list, edge_x) in [
-            (Side::Left, left, x0),
-            (Side::Right, right, x0 + size.0),
-        ] {
-            let n = list.len();
-            for (i, pin) in list.iter().enumerate() {
-                pins.push(PinLayout {
-                    name: pin.name.clone(),
-                    net: pin.net.clone(),
-                    number,
-                    x: edge_x,
-                    y: y0 + size.1 * (i + 1) as f64 / (n + 1) as f64,
-                    side,
-                });
-                number += 1;
-            }
-        }
-    }
-    CompLayout {
-        center,
-        size,
-        orient,
-        pins,
-    }
-}
-
-fn compute_layout(sch: &SchematicDoc) -> Layout {
-    let mut out = Layout {
-        comps: BTreeMap::new(),
-        modules: BTreeMap::new(),
-    };
-    let Some(root) = sch.instances.get("root") else {
-        return out;
-    };
-
-    let components: Vec<&InstanceDoc> = sch
-        .instances
-        .values()
-        .filter(|i| i.kind == InstanceKind::Component)
-        .collect();
-
-    // Authored positions win only when they cover every component; a partial
-    // set would interleave two coordinate systems.
-    let all_authored = !components.is_empty() && components.iter().all(|c| c.position.is_some());
-    if all_authored {
-        for inst in &components {
-            let pos = inst.position.expect("checked above");
-            let class = classify(inst);
-            let (left, right) = split_pins(&inst.pins);
-            let orient = match class.symbol {
-                Some(_) => Orient::from_rotation(pos.rotation),
-                None => Orient::Right,
-            };
-            let size = match class.symbol {
-                Some(sym) => {
-                    let (w, h, _) = sym.geom();
-                    match orient {
-                        Orient::Up | Orient::Down => (h, w),
-                        _ => (w, h),
-                    }
-                }
-                None => {
-                    let max_side = left.len().max(right.len()).max(1) as f64;
-                    let label = |pins: &[PinDoc]| pins.iter().map(|p| p.name.len()).max().unwrap_or(0);
-                    (
-                        CHIP_MIN_W.max(0.8 + 0.1 * (label(&left) + label(&right)) as f64),
-                        CHIP_MIN_H.max(max_side * PIN_SPACING + 0.4),
-                    )
-                }
-            };
-            let center = (pos.x / AUTHORED_DIVISOR, pos.y / AUTHORED_DIVISOR);
-            out.comps.insert(
-                inst.path.clone(),
-                comp_layout_at(center, size, orient, &left, &right),
-            );
-        }
-        // Module boxes from descendant component bounds.
-        for inst in sch.instances.values() {
-            if inst.kind != InstanceKind::Module || inst.path == "root" {
-                continue;
-            }
-            let prefix = format!("{}.", inst.path);
-            let mut bounds: Option<Rect> = None;
-            for (path, c) in &out.comps {
-                if !path.starts_with(&prefix) {
-                    continue;
-                }
-                let r = Rect {
-                    x: c.center.0 - c.size.0 / 2.0,
-                    y: c.center.1 - c.size.1 / 2.0,
-                    w: c.size.0,
-                    h: c.size.1,
-                };
-                bounds = Some(match bounds {
-                    None => r,
-                    Some(b) => {
-                        let x = b.x.min(r.x);
-                        let y = b.y.min(r.y);
-                        Rect {
-                            x,
-                            y,
-                            w: (b.x + b.w).max(r.x + r.w) - x,
-                            h: (b.y + b.h).max(r.y + r.h) - y,
-                        }
-                    }
-                });
-            }
-            if let Some(b) = bounds {
-                out.modules.insert(
-                    inst.path.clone(),
-                    Rect {
-                        x: b.x - MODULE_PAD,
-                        y: b.y - MODULE_TITLE_H - MODULE_PAD,
-                        w: b.w + 2.0 * MODULE_PAD,
-                        h: b.h + MODULE_TITLE_H + 2.0 * MODULE_PAD,
-                    },
-                );
-            }
-        }
-        return out;
-    }
-
-    let sized = size_node(sch, root);
-    place(&sized, 0.0, 0.0, true, &mut out);
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +340,7 @@ fn point(x: f64, y: f64) -> Value {
 
 fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
     let layout = compute_layout(sch);
+    let routes = crate::route::route_nets(&layout, sch);
     let mut em = Emitter {
         elements: Vec::new(),
         id_map: BTreeMap::new(),
@@ -691,9 +385,8 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
             "center": point(cl.center.0, cl.center.1),
             "size": { "width": cl.size.0, "height": cl.size.1 },
         });
-        if let Some(sym) = class.symbol {
-            component["symbol_name"] =
-                json!(format!("{}_{}", sym.symbol_base(), cl.orient.suffix()));
+        if let Some(symbol_name) = &cl.symbol_name {
+            component["symbol_name"] = json!(symbol_name);
             if let Some(v) = value {
                 component["symbol_display_value"] = json!(v);
             }
@@ -747,17 +440,29 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
                 "center": point(pin.x, pin.y),
                 "pin_number": pin.number,
                 "is_connected": pin.net.is_some(),
-                "side_of_component": match pin.side { Side::Left => "left", Side::Right => "right" },
-                "facing_direction": match pin.side { Side::Left => "left", Side::Right => "right" },
+                "side_of_component": match pin.side {
+                    Side::Left => "left",
+                    Side::Right => "right",
+                    Side::Top => "top",
+                    Side::Bottom => "bottom",
+                },
+                "facing_direction": match pin.side {
+                    Side::Left => "left",
+                    Side::Right => "right",
+                    Side::Top => "up",
+                    Side::Bottom => "down",
+                },
             });
-            if class.symbol.is_none() {
+            if cl.symbol_name.is_none() {
                 port["display_pin_label"] = json!(pin.name);
             }
             em.push(&schport_id, path, port);
         }
 
         // The box renderer draws no refdes itself; symbol glyphs do ({REF}).
-        if class.symbol.is_none() {
+        // Keyed off the RESOLVED layout, not classify(): a glyph choice can
+        // have fallen back to a chip when pin mapping failed.
+        if cl.symbol_name.is_none() {
             let text_id = format!("text:{path}");
             em.push(
                 &text_id,
@@ -810,6 +515,61 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
             }),
         );
 
+        // Routed nets read through wires; everything else labels every pin.
+        if let Some(routed) = routes.get(net_name) {
+            for (k, chain) in routed.chains.iter().enumerate() {
+                let schtrace_id = if k == 0 {
+                    format!("schtrace:{net_name}")
+                } else {
+                    format!("schtrace:{net_name}:{k}")
+                };
+                let mut edges: Vec<Value> = chain
+                    .edges
+                    .iter()
+                    .map(|e| {
+                        let mut edge = json!({
+                            "from": point(e.from.0, e.from.1),
+                            "to": point(e.to.0, e.to.1),
+                        });
+                        if e.crossing {
+                            edge["is_crossing"] = json!(true);
+                        }
+                        edge
+                    })
+                    .collect();
+                if let (Some((comp, pin)), Some(first)) = (&chain.from_port, edges.first_mut()) {
+                    first["from_schematic_port_id"] = json!(format!("schport:{comp}:{pin}"));
+                }
+                if let (Some((comp, pin)), Some(last)) = (&chain.to_port, edges.last_mut()) {
+                    last["to_schematic_port_id"] = json!(format!("schport:{comp}:{pin}"));
+                }
+                // Junction dots ride the main chain; branches carry an empty
+                // (required) junctions array.
+                let junctions: Vec<Value> = if k == 0 {
+                    routed
+                        .junctions
+                        .iter()
+                        .map(|j| point(j.0, j.1))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                em.push(
+                    &schtrace_id,
+                    net_name,
+                    json!({
+                        "type": "schematic_trace",
+                        "schematic_trace_id": schtrace_id,
+                        "source_trace_id": trace_id,
+                        "junctions": junctions,
+                        "edges": edges,
+                        "subcircuit_connectivity_map_key": net_name,
+                    }),
+                );
+            }
+            continue;
+        }
+
         for port in &net.ports {
             let Some(cl) = layout.comps.get(&port.component) else {
                 continue;
@@ -818,9 +578,12 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
                 continue;
             };
             let label_id = format!("netlabel:{}:{}", port.component, port.pin);
-            let (dx, anchor_side) = match pin.side {
-                Side::Left => (-NET_LABEL_OFFSET, "right"),
-                Side::Right => (NET_LABEL_OFFSET, "left"),
+            let (dx, dy, anchor_side) = match pin.side {
+                Side::Left => (-NET_LABEL_OFFSET, 0.0, "right"),
+                Side::Right => (NET_LABEL_OFFSET, 0.0, "left"),
+                // World y-down: Top ports extend the label upward (-y).
+                Side::Top => (0.0, -NET_LABEL_OFFSET, "bottom"),
+                Side::Bottom => (0.0, NET_LABEL_OFFSET, "top"),
             };
             em.push(
                 &label_id,
@@ -830,8 +593,8 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
                     "schematic_net_label_id": label_id,
                     "source_net_id": net_id,
                     "text": net_name,
-                    "center": point(pin.x + dx, pin.y),
-                    "anchor_position": point(pin.x + dx, pin.y),
+                    "center": point(pin.x + dx, pin.y + dy),
+                    "anchor_position": point(pin.x + dx, pin.y + dy),
                     "anchor_side": anchor_side,
                 }),
             );
@@ -983,27 +746,103 @@ mod tests {
 
     #[test]
     fn id_map_covers_every_id_reference() {
+        // Recursive: trace edges nest from/to_schematic_port_id references.
+        fn walk(value: &Value, id_map: &BTreeMap<String, String>, ctx: &Value) {
+            match value {
+                Value::Object(obj) => {
+                    for (key, v) in obj {
+                        if key.ends_with("_id") {
+                            let ids: Vec<&str> = match v {
+                                Value::String(s) => vec![s.as_str()],
+                                Value::Array(items) => {
+                                    items.iter().filter_map(Value::as_str).collect()
+                                }
+                                _ => vec![],
+                            };
+                            for id in ids {
+                                assert!(
+                                    id_map.contains_key(id),
+                                    "unmapped id {id} referenced by {key} in {ctx}"
+                                );
+                            }
+                        }
+                        walk(v, id_map, ctx);
+                    }
+                }
+                Value::Array(items) => {
+                    for v in items {
+                        walk(v, id_map, ctx);
+                    }
+                }
+                _ => {}
+            }
+        }
         let doc = to_circuit_json(&fixture());
         assert!(!doc.elements.is_empty());
         for el in &doc.elements {
-            let obj = el.as_object().unwrap();
-            for (key, value) in obj {
-                if !key.ends_with("_id") {
-                    continue;
-                }
-                let ids: Vec<&str> = match value {
-                    Value::String(s) => vec![s.as_str()],
-                    Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
-                    _ => vec![],
-                };
-                for id in ids {
-                    assert!(
-                        doc.id_map.contains_key(id),
-                        "unmapped id {id} referenced by {key} in {el}"
-                    );
-                }
-            }
+            walk(el, &doc.id_map, el);
         }
+    }
+
+    #[test]
+    fn local_nets_route_as_traces_power_nets_keep_labels() {
+        let mut out = fixture();
+        let sch = out.schematic.as_mut().unwrap();
+        // Rewire pin 2 of both resistors onto a power net.
+        for path in ["root.RA", "root.RB"] {
+            sch.instances.get_mut(path).unwrap().pins[1].net = Some("VCC".into());
+        }
+        sch.nets.insert(
+            "VCC".into(),
+            NetDoc {
+                name: "VCC".into(),
+                kind: "Power".into(),
+                ports: vec![
+                    PortRef {
+                        component: "root.RA".into(),
+                        pin: "2".into(),
+                    },
+                    PortRef {
+                        component: "root.RB".into(),
+                        pin: "2".into(),
+                    },
+                ],
+            },
+        );
+        let doc = to_circuit_json(&out);
+
+        // N1 (3 ports, local signal) routes: main chain + one branch, no labels.
+        assert!(doc.id_map.contains_key("schtrace:N1"));
+        assert!(doc.id_map.contains_key("schtrace:N1:1"));
+        assert!(!doc.id_map.keys().any(|k| k.starts_with("netlabel:") && doc.id_map[k] == "N1"));
+
+        // VCC (power) keeps labels and gets no wires.
+        assert!(doc.id_map.contains_key("netlabel:root.RA:2"));
+        assert!(!doc.id_map.contains_key("schtrace:VCC"));
+
+        // Every emitted trace is a contiguous polyline anchored on real ports.
+        for el in doc.elements.iter().filter(|e| e["type"] == "schematic_trace") {
+            let edges = el["edges"].as_array().unwrap();
+            assert!(!edges.is_empty());
+            for pair in edges.windows(2) {
+                assert_eq!(pair[0]["to"], pair[1]["from"], "contiguity in {el}");
+            }
+            assert!(el["junctions"].is_array(), "junctions required in {el}");
+        }
+        let main = doc
+            .elements
+            .iter()
+            .find(|e| e["schematic_trace_id"] == json!("schtrace:N1"))
+            .unwrap();
+        let edges = main["edges"].as_array().unwrap();
+        assert!(edges.first().unwrap()["from_schematic_port_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("schport:"));
+        assert!(edges.last().unwrap()["to_schematic_port_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("schport:"));
     }
 
     #[test]
@@ -1071,6 +910,7 @@ mod tests {
                 x: 25.4 * (i as f64 + 1.0),
                 y: 50.8,
                 rotation: 0.0,
+                mirror: None,
             });
         }
         let doc = to_circuit_json(&out);
@@ -1081,6 +921,15 @@ mod tests {
             .unwrap();
         assert_eq!(ra["center"]["x"], json!(1.0));
         assert_eq!(ra["center"]["y"], json!(-2.0), "y flips into schematic space");
+    }
+
+    #[test]
+    fn horz_only_bases_resolve_via_axis_fallback() {
+        let (name, _) = resolve_variant("zener_diode", Orient::Right).unwrap();
+        assert_eq!(name, "zener_diode_horz");
+        let (name, _) = resolve_variant("zener_diode", Orient::Up).unwrap();
+        assert_eq!(name, "zener_diode_vert");
+        assert!(resolve_variant("no_such_symbol", Orient::Right).is_none());
     }
 
     #[test]

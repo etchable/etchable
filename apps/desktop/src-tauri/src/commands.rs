@@ -52,6 +52,60 @@ pub async fn get_state(state: State<'_, SharedAppState>) -> CmdResult<UiStateSna
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct PositionIn {
+    pub x: f64,
+    pub y: f64,
+    #[serde(default)]
+    pub rotation: f64,
+    #[serde(default)]
+    pub mirror: Option<String>,
+}
+
+/// Persist authored positions into the open board file as a trailing
+/// `# pcb:sch` block. Save-all by design: the layout's all-or-nothing
+/// authored rule expects every component's position in one write. The fs
+/// watcher picks the write up and rebuilds — that rebuild IS the edit loop's
+/// confirmation. `base_hash` is the `source_hash` of the build the edit was
+/// made against; a mismatch means someone (likely the agent) changed the
+/// file since, and the stale edit is rejected.
+#[tauri::command]
+pub fn save_positions(
+    state: State<'_, SharedAppState>,
+    positions: std::collections::BTreeMap<String, PositionIn>,
+    base_hash: String,
+) -> CmdResult<()> {
+    let Some(source) = state.canvas.read(|s| s.source.clone()) else {
+        return Err("no board open".into());
+    };
+    let current = zen_build::content_hash(&source).map_err(|e| e.to_string())?;
+    if current != base_hash {
+        return Err("content modified".into());
+    }
+    let map: std::collections::BTreeMap<String, zen_build::PositionDoc> = positions
+        .into_iter()
+        .map(|(path, p)| {
+            let key = path
+                .strip_prefix("root.")
+                .ok_or_else(|| format!("not an instance path: {path}"))?
+                .to_string();
+            Ok((
+                key,
+                zen_build::PositionDoc {
+                    x: p.x,
+                    y: p.y,
+                    rotation: p.rotation,
+                    mirror: p.mirror,
+                },
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    if map.is_empty() {
+        return Err("no positions to save".into());
+    }
+    zen_build::write_positions(&source, &map).map_err(|e| e.to_string())
+}
+
 /// Canvas selection changed. Paths are instance paths and/or net names.
 #[tauri::command]
 pub fn set_selection(

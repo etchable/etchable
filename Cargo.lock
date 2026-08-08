@@ -7444,11 +7444,13 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
+ "hex",
  "pcb-sch",
  "pcb-zen",
  "pcb-zen-core",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "starlark",
 ]
 

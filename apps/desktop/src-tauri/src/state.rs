@@ -42,7 +42,7 @@ pub struct UiStateSnapshot {
 
 /// Versioned `build-finished` payload / snapshot build state. The UI rejects
 /// mismatched versions loudly — bump when the shape changes.
-pub const BUILD_PAYLOAD_VERSION: u32 = 2;
+pub const BUILD_PAYLOAD_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildView {
@@ -54,11 +54,15 @@ pub struct BuildView {
     pub circuit_json: Vec<serde_json::Value>,
     /// Circuit JSON id -> instance path (or net name).
     pub id_map: std::collections::BTreeMap<String, String>,
+    /// SHA-256 of the board source at build time — the optimistic-concurrency
+    /// token `save_positions` requires.
+    pub source_hash: Option<String>,
 }
 
 impl From<&zen_build::BuildOutput> for BuildView {
     fn from(out: &zen_build::BuildOutput) -> Self {
         let cj = zen_build::to_circuit_json(out);
+        let source_hash = zen_build::content_hash(std::path::Path::new(&out.source)).ok();
         Self {
             version: BUILD_PAYLOAD_VERSION,
             source: out.source.clone(),
@@ -66,6 +70,7 @@ impl From<&zen_build::BuildOutput> for BuildView {
             diagnostics: out.diagnostics.clone(),
             circuit_json: cj.elements,
             id_map: cj.id_map,
+            source_hash,
         }
     }
 }

@@ -38,15 +38,47 @@ for (const [i, el] of doc.elements.entries()) {
   }
 }
 
-// 2. Every id referenced anywhere resolves through id_map.
-for (const el of doc.elements) {
-  for (const [key, value] of Object.entries(el)) {
-    if (!key.endsWith("_id")) continue;
-    const ids = Array.isArray(value) ? value : [value];
-    for (const id of ids) {
-      if (typeof id === "string" && !(id in doc.id_map)) {
-        errors.push(`unmapped id ${id} referenced by ${el.type}.${key}`);
+// 2. Every id referenced anywhere resolves through id_map — recursively,
+// since schematic_trace edges nest from/to_schematic_port_id references.
+function checkIds(node, type, path) {
+  if (Array.isArray(node)) {
+    for (const [i, v] of node.entries()) checkIds(v, type, `${path}[${i}]`);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key.endsWith("_id")) {
+      const ids = Array.isArray(value) ? value : [value];
+      for (const id of ids) {
+        if (typeof id === "string" && !(id in doc.id_map)) {
+          errors.push(`unmapped id ${id} referenced by ${type}.${path}${path ? "." : ""}${key}`);
+        }
       }
+    }
+    checkIds(value, type, `${path}${path ? "." : ""}${key}`);
+  }
+}
+for (const el of doc.elements) checkIds(el, el.type, "");
+
+// 2b. schematic_trace invariants: the renderer draws edges as a continuation
+// polyline (edge.from is honored only after an is_crossing restart), so every
+// trace must be contiguous, and `junctions` must always be an array.
+const near = (a, b) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+for (const el of doc.elements) {
+  if (el.type !== "schematic_trace") continue;
+  if (!Array.isArray(el.junctions)) {
+    errors.push(`${el.schematic_trace_id}: junctions must be an array`);
+  }
+  if (!Array.isArray(el.edges) || el.edges.length === 0) {
+    errors.push(`${el.schematic_trace_id}: edges must be a non-empty array`);
+    continue;
+  }
+  for (let i = 1; i < el.edges.length; i++) {
+    if (!near(el.edges[i - 1].to, el.edges[i].from)) {
+      errors.push(
+        `${el.schematic_trace_id}: edge[${i}] breaks polyline contiguity ` +
+          `(${JSON.stringify(el.edges[i - 1].to)} -> ${JSON.stringify(el.edges[i].from)})`,
+      );
     }
   }
 }

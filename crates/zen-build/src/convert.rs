@@ -186,6 +186,13 @@ pub(crate) fn convert_schematic(sch: &mut Schematic, ws_root: &Path) -> Schemati
                         x: pos.x,
                         y: pos.y,
                         rotation: pos.rotation,
+                        mirror: pos.mirror.as_ref().map(|m| {
+                            match m {
+                                pcb_sch::position::MirrorAxis::X => "x",
+                                pcb_sch::position::MirrorAxis::Y => "y",
+                            }
+                            .to_string()
+                        }),
                     });
                 }
             }

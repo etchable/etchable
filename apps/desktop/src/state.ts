@@ -11,6 +11,7 @@ import type {
   BuildSummary,
   BuildView,
   Diag,
+  PositionIn,
 } from "./types";
 import { BUILD_PAYLOAD_VERSION } from "./types";
 import { transcriptReducer, type ChatItem } from "./chat/messages";
@@ -133,6 +134,19 @@ export function useEtchable() {
     });
   }, []);
 
+  // Drag-to-move persistence: write authored positions into the board file.
+  // The watcher-triggered rebuild is the loop's confirmation; a "content
+  // modified" rejection means the file changed under the edit (e.g. an agent
+  // write) and that rebuild is already on its way — drop the stale edit.
+  const savePositions = useCallback(
+    (positions: Record<string, PositionIn>, baseHash: string) => {
+      void invoke("save_positions", { positions, baseHash }).catch((err) => {
+        console.warn("save_positions rejected:", err);
+      });
+    },
+    [],
+  );
+
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -217,6 +231,7 @@ export function useEtchable() {
     openBoard,
     rebuild,
     setSelection,
+    savePositions,
     sendMessage,
     respondPermission,
     interruptAgent,

@@ -16,6 +16,8 @@ pcb-sch.workspace = true
 starlark = { git = "https://github.com/diodeinc/starlark-rust", rev = "c3d776bcd0bf074b00fc059d7700b82ab8dcc010", default-features = false }
 
 clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hex = "0.4"
 
 [[bin]]
 name = "zen-build"

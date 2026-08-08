@@ -3,7 +3,7 @@
 // ---- Build data (snake_case, from "build-finished" event / get_state) ----
 
 /// Bump in lockstep with apps/desktop/src-tauri/src/state.rs::BUILD_PAYLOAD_VERSION.
-export const BUILD_PAYLOAD_VERSION = 2;
+export const BUILD_PAYLOAD_VERSION = 3;
 
 /// A Circuit JSON element (tscircuit's intermediary format). Kept opaque —
 /// the UI only reads `type` and id fields; everything else belongs to the
@@ -18,6 +18,8 @@ export type BuildView = {
   circuit_json: CircuitJsonElement[];
   /** Circuit JSON id -> instance path (or net name). Never parse ids apart. */
   id_map: Record<string, string>;
+  /** SHA-256 of the board source at build time; save_positions' base_hash. */
+  source_hash: string | null;
 };
 
 export type SchematicDoc = {
@@ -40,7 +42,15 @@ export type InstanceDoc = {
   attributes?: Record<string, unknown>; // value, package, mpn, type, ...
   children?: Record<string, string>; // child name -> child path
   pins?: PinDoc[];
-  position?: { x: number; y: number; rotation: number };
+  position?: { x: number; y: number; rotation: number; mirror?: string | null };
+};
+
+/** Authored position payload for save_positions (keys = instance paths). */
+export type PositionIn = {
+  x: number;
+  y: number;
+  rotation: number;
+  mirror?: string | null;
 };
 
 export type NetDoc = {

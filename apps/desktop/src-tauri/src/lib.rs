@@ -94,6 +94,7 @@ pub fn run() {
             commands::select_board,
             commands::get_state,
             commands::set_selection,
+            commands::save_positions,
             commands::send_message,
             commands::respond_permission,
             commands::interrupt_agent,

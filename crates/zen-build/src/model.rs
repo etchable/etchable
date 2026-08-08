@@ -102,11 +102,15 @@ pub struct PinDoc {
     pub net: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionDoc {
     pub x: f64,
     pub y: f64,
     pub rotation: f64,
+    /// "x" | "y" when the authored comment carried a mirror axis. Round-
+    /// tripped so save-all write-back never destroys an authored mirror.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -49,3 +49,6 @@ jobs:
         run: |
           cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json --offline \
             | pnpm run --silent validate:circuit-json
+
+      - name: Symbol geometry table matches schematic-symbols pin
+        run: pnpm --filter @etchable/desktop gen:symbol-geom:check

@@ -7,8 +7,12 @@
 
 mod circuit_json;
 mod convert;
+mod layout;
 mod model;
 mod pipeline;
+mod positions;
+mod route;
+mod symbol_geom;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +21,7 @@ use anyhow::{Context, Result};
 
 pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
 pub use model::*;
+pub use positions::{content_hash, write_positions};
 
 /// An opened .zen workspace with resolved dependencies.
 ///

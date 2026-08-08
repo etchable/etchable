@@ -43,13 +43,17 @@ Findings, from inspecting `pcb-sch` at the pinned rev (`v0.4.25`, checkout
   Rejected.
 
 So: a deterministic layout pass in `zen-build` (Rust) assigns
-`schematic_component.center` before emission — a port of the previous TS
-canvas layout (bottom-up sizing, per-module grid packing, left/right pin
-split) rescaled to schematic units. When **every** component in the build
-carries an authored position, the authored coordinates win (scaled 1/25.4,
-y negated for schematic-space y-up; rotation → symbol orientation variant);
-partial annotation falls back to computed layout so the result is always
-fully positioned and deterministic.
+`schematic_component.center` before emission — bottom-up sizing plus
+connectivity-aware per-module packing (directed sibling edges from
+output-ish→input-ish pins on local signal nets, longest-path column
+layering, two-sweep barycenter row ordering), in `crates/zen-build/src/layout.rs`.
+When **every** component in the build carries an authored position, the
+authored coordinates win (scaled 1/25.4, y negated for schematic-space y-up;
+rotation → symbol orientation variant); partial annotation falls back to
+computed layout so the result is always fully positioned and deterministic.
+The all-or-nothing rule is **load-bearing for the drag-to-persist edit
+loop**: its first save writes every component's position at once, so a
+partially-annotated board is never a steady state.
 
 ## G2 — viewer interactivity. Chosen branch: **A** (use the viewer directly)
 

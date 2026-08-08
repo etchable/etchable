@@ -1,0 +1,32 @@
+"""Parts gallery: one of each symbol-bearing generic.
+
+Exists for the rendering pipeline, not as a sensible circuit — the CI
+validation harness and visual smoke tests use it to exercise symbol
+classification (glyphs, chip fallbacks) and net routing beyond what the
+demo board covers.
+"""
+
+Resistor = Module("@stdlib/generics/Resistor.zen")
+Capacitor = Module("@stdlib/generics/Capacitor.zen")
+Inductor = Module("@stdlib/generics/Inductor.zen")
+Led = Module("@stdlib/generics/Led.zen")
+Zener = Module("@stdlib/generics/Zener.zen")
+Crystal = Module("@stdlib/generics/Crystal.zen")
+FerriteBead = Module("@stdlib/generics/FerriteBead.zen")
+
+VCC = Power("VCC")
+GND = Ground("GND")
+N1 = Net("N1")
+N2 = Net("N2")
+N3 = Net("N3")
+N4 = Net("N4")
+
+Resistor(name="R1", value="10kohms", package="0402", P1=VCC, P2=N1)
+Capacitor(name="C1", value="100nF", package="0402", P1=N1, P2=GND)
+Inductor(name="L1", value="10uH", package="0603", P1=N1, P2=N2)
+Led(name="D1", package="0402", color="green", A=N2, K=GND)
+Zener(name="D2", zener_voltage="5.1V", package="SOD-123", A=GND, K=N3)
+Crystal(name="X1", frequency="16MHz", package="3215_2Pin", XIN=N3, XOUT=N4)
+FerriteBead(name="FB1", package="0402", P1=N4, P2=VCC)
+
+Board(name="parts", layers=2, layout_path="layout/parts")
