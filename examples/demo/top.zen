@@ -1,0 +1,30 @@
+"""Demo board: an LED blinker with a sense divider.
+
+Small but hierarchical on purpose — it exercises modules, components,
+typed nets, and io() so the canvas has something real to draw.
+"""
+
+load("@stdlib/interfaces.zen", "Analog")
+
+Resistor = Module("@stdlib/generics/Resistor.zen")
+Led = Module("@stdlib/generics/Led.zen")
+VoltageDivider = Module("./VoltageDivider.zen")
+
+VCC = Power("VCC_3V3")
+GND = Ground("GND")
+LED_A = Net("LED_A")
+V_SENSE = Analog("V_SENSE")
+
+Resistor(name="R_LIMIT", value="1kohm", package="0402", P1=VCC, P2=LED_A)
+Led(name="D_STATUS", package="0402", color="red", A=LED_A, K=GND)
+
+VoltageDivider(
+    name="SENSE_DIV",
+    r1_value="100kohms",
+    r2_value="47kohms",
+    VIN=VCC,
+    VOUT=V_SENSE,
+    GND=GND,
+)
+
+Board(name="demo", layers=2, layout_path="layout/demo")

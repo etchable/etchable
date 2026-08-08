@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# diodeinc/pcb internal crates, pinned to a release tag. These have no semver
+# promise; only crates/zen-build may depend on them (anti-corruption layer).
+pcb-zen = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
+pcb-zen-core = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
+pcb-sch = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
+
+[profile.dev.package."*"]
+# The pcb-* / starlark dependency tree is huge; optimize deps even in dev so
+# eval of real boards stays interactive.
+opt-level = 2

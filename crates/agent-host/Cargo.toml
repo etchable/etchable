@@ -1,0 +1,15 @@
+[package]
+name = "agent-host"
+version.workspace = true
+edition.workspace = true
+description = "Claude Code subprocess lifecycle: spawn, stream events, send turns, answer permission prompts."
+
+[dependencies]
+agent-proto = { path = "../agent-proto" }
+anyhow.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+futures = "0.3"

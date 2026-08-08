@@ -1,0 +1,22 @@
+[package]
+name = "zen-build"
+version.workspace = true
+edition.workspace = true
+description = "Eval pipeline for .zen files: resolve -> eval -> checks -> schematic -> ERC. The only crate allowed to depend on pcb-* internals."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+pcb-zen.workspace = true
+pcb-zen-core.workspace = true
+pcb-sch.workspace = true
+# Must match the exact fork+rev used by the pcb workspace so types line up.
+starlark = { git = "https://github.com/diodeinc/starlark-rust", rev = "c3d776bcd0bf074b00fc059d7700b82ab8dcc010", default-features = false }
+
+clap = { version = "4", features = ["derive"] }
+
+[[bin]]
+name = "zen-build"
+path = "src/bin/zen_build.rs"

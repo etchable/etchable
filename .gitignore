@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# vendored zener stdlib (scripts/fetch-stdlib.sh)
+/lib/std
+
+# pcb package cache vendored next to boards
+.pcb/
+
+# rust
+/target
+
+# nix build output
+/result

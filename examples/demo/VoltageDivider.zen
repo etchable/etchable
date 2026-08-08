@@ -1,0 +1,15 @@
+"""A simple voltage divider module (adapted from diodeinc/pcb examples, MIT)."""
+
+load("@stdlib/interfaces.zen", "Analog")
+
+Resistor = Module("@stdlib/generics/Resistor.zen")
+
+r1_value = config(str, default="10kohms", optional=True)
+r2_value = config(str, default="10kohms", optional=True)
+
+VIN = io(Power, direction="input")
+VOUT = io(Analog, direction="output")
+GND = io(Ground)
+
+Resistor(name="R1", value=r1_value, package="0603", P1=VIN, P2=VOUT)
+Resistor(name="R2", value=r2_value, package="0603", P1=VOUT, P2=GND)

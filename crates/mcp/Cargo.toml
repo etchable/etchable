@@ -1,0 +1,18 @@
+[package]
+name = "mcp"
+version.workspace = true
+edition.workspace = true
+description = "Localhost MCP server exposing schematic state + canvas selection to the embedded agent (streamable HTTP, hand-rolled JSON-RPC)."
+
+[dependencies]
+zen-build = { path = "../zen-build" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+axum = "0.8"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

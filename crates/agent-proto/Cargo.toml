@@ -1,0 +1,13 @@
+[package]
+name = "agent-proto"
+version.workspace = true
+edition.workspace = true
+description = "Claude Code stream-json protocol: event/message types + NDJSON codec. Pure types, no process management."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-util.workspace = true
+bytes = "1"

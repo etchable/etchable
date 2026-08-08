@@ -1,0 +1,5 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "stdlib_kicad-footprints_LED_SMD") (type "KiCad") (uri "${KIPRJMOD}/../../.pcb/stdlib/kicad-footprints/LED_SMD.pretty") (options "") (descr ""))
+  (lib (name "stdlib_kicad-footprints_Resistor_SMD") (type "KiCad") (uri "${KIPRJMOD}/../../.pcb/stdlib/kicad-footprints/Resistor_SMD.pretty") (options "") (descr ""))
+)
