@@ -66,6 +66,42 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   // Set when a viewer callback handled the click, so the container's
   // background handler (which the same click bubbles into) doesn't clear it.
   const clickHandledRef = useRef(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // The paper dot grid lives on the container as a CSS background; the
+  // viewer stamps its projection on the SVG as data-real-to-screen-transform.
+  // Mirror that matrix onto the background so the grid pans and zooms with
+  // the board (adapting the cell by powers of 5 to keep a sane density),
+  // instead of sitting behind it as static wallpaper. Direct style writes,
+  // not state — pan/zoom emits a mutation per frame.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const sync = () => {
+      const raw = wrap
+        .querySelector("[data-real-to-screen-transform]")
+        ?.getAttribute("data-real-to-screen-transform");
+      const m = raw?.match(/matrix\(([^)]*)\)/);
+      if (!m) return;
+      const [a, , , , e, f] = m[1].split(/[,\s]+/).map(Number);
+      const unit = Math.abs(a); // px per schematic unit
+      if (!Number.isFinite(unit) || unit === 0 || !Number.isFinite(e) || !Number.isFinite(f)) return;
+      let cell = unit;
+      while (cell < 18) cell *= 5;
+      while (cell > 220) cell /= 5;
+      wrap.style.backgroundSize = `${cell}px ${cell}px`;
+      wrap.style.backgroundPosition = `${e}px ${f}px`;
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(wrap, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["data-real-to-screen-transform"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   // path/net -> toggled selection update, shared by all click paths.
   const applyClick = (target: string, shiftKey: boolean) => {
@@ -189,7 +225,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   }, [selection]);
 
   return (
-    <div className="canvas-wrap" onClick={onContainerClick}>
+    <div className="canvas-wrap" ref={wrapRef} onClick={onContainerClick}>
       {view && view.circuit_json.length > 0 ? (
         <SchematicViewer
           key={source ?? "no-board"}
