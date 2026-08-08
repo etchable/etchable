@@ -1,6 +1,17 @@
-# Tauri + React + Typescript
+# etchable
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+pnpm workspace.
+
+## Structure
+
+- `apps/desktop` — Tauri + React + TypeScript desktop app
+
+## Development
+
+```sh
+pnpm install
+pnpm tauri dev
+```
 
 ## Recommended IDE Setup
 
