@@ -1,6 +1,7 @@
 {
   "name": "etchable",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "pnpm --filter @etchable/desktop dev",
     "build": "pnpm --filter @etchable/desktop build",
