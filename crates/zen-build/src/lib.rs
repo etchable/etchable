@@ -11,6 +11,7 @@ mod layout;
 mod model;
 mod pipeline;
 mod positions;
+mod project;
 mod route;
 mod symbol_geom;
 
@@ -22,6 +23,10 @@ use anyhow::{Context, Result};
 pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
 pub use model::*;
 pub use positions::{content_hash, write_positions};
+pub use project::{
+    load_project, resolve_parts, scaffold_project, ComponentCard, PartFields, ProjectDoc,
+    ResolvedPart, VendorSel, ETCH_MANIFEST,
+};
 
 /// An opened .zen workspace with resolved dependencies.
 ///
@@ -53,6 +58,11 @@ impl Workspace {
             root,
             offline,
         })
+    }
+
+    /// The materialized stdlib dir (`<root>/.pcb/stdlib`).
+    pub fn stdlib_dir(&self) -> PathBuf {
+        self.eval.stdlib_dir()
     }
 
     /// Workspace root (the directory containing `pcb.toml`, or the fallback

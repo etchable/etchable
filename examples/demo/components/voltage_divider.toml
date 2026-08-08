@@ -1,0 +1,4 @@
+# Part card for components/voltage_divider.zen. This block contains two
+# resistors, so per the part-target rule it carries documentation only —
+# part selection for its resistors lives in etch.toml [parts] overrides.
+description = "Two-resistor sense divider"

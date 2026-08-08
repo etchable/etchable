@@ -8,7 +8,7 @@ load("@stdlib/interfaces.zen", "Analog")
 
 Resistor = Module("@stdlib/generics/Resistor.zen")
 Led = Module("@stdlib/generics/Led.zen")
-VoltageDivider = Module("./VoltageDivider.zen")
+VoltageDivider = Module("./components/voltage_divider.zen")
 
 VCC = Power("VCC_3V3")
 GND = Ground("GND")

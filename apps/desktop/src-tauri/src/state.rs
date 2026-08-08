@@ -6,12 +6,18 @@ use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 use zen_build::BuildSummary;
 
-/// A build request for the single builder task. Watcher fires `reply: None`;
-/// MCP `build` and `select_board` want the summary back.
+/// A request for the single builder task — orthogonal flags, one queue, so
+/// builds and project refreshes never race. Watcher fires `reply: None`;
+/// MCP `build` and the open commands want the summary back (`reply` is only
+/// meaningful with `build: true`).
 pub struct BuildRequest {
     /// Re-run workspace discovery + dependency resolution first
     /// (needed when pcb.toml changed).
     pub reload: bool,
+    /// Re-read etch.toml + component cards and emit `project-changed`.
+    pub reload_project: bool,
+    /// Run the zen build (false = project-only refresh, no build events).
+    pub build: bool,
     pub reply: Option<oneshot::Sender<Result<BuildSummary, String>>>,
 }
 
@@ -29,6 +35,27 @@ pub struct AppState {
 
 pub type SharedAppState = Arc<AppState>;
 
+/// Project summary for the UI (`project-changed` payload + snapshot field).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectView {
+    pub name: String,
+    pub root: String,
+    pub board: Option<String>,
+    pub problems: Vec<String>,
+}
+
+impl From<&zen_build::ProjectDoc> for ProjectView {
+    fn from(doc: &zen_build::ProjectDoc) -> Self {
+        Self {
+            name: doc.name.clone(),
+            root: doc.root.display().to_string(),
+            board: doc.board.clone(),
+            problems: doc.problems.clone(),
+        }
+    }
+}
+
 /// Snapshot handed to the UI on demand (late mounts, reloads).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +65,7 @@ pub struct UiStateSnapshot {
     pub selection: mcp::Selection,
     pub agent_running: bool,
     pub build: Option<BuildView>,
+    pub project: Option<ProjectView>,
 }
 
 /// Versioned `build-finished` payload / snapshot build state. The UI rejects

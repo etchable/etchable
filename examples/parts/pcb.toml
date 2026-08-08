@@ -1,7 +1,7 @@
 [workspace]
-name = "demo"
+name = "parts"
 pcb-version = "0.4"
 
 [board]
-name = "demo"
+name = "parts"
 path = "board.zen"

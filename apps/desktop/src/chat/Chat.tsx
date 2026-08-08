@@ -113,7 +113,7 @@ function PermissionCard({
         >
           Deny
         </Button>
-        {answered && (
+        {answered ? (
           <span
             className={
               "font-mono text-[10.5px] " +
@@ -122,14 +122,52 @@ function PermissionCard({
           >
             {item.verdict === "allowed" ? "Allowed" : "Denied"}
           </span>
+        ) : (
+          <span className="animate-pulse text-[10px] text-ink/35">waiting for you</span>
         )}
       </div>
     </div>
   );
 }
 
+function ThinkingRow({ item }: { item: ChatItem & { kind: "thinking" } }) {
+  const [open, setOpen] = useState(false);
+  if (item.streaming) {
+    // Live: clip to roughly the last three lines, newest visible.
+    return (
+      <div className="flex">
+        <div className="flex max-h-[52px] max-w-[95%] flex-col justify-end overflow-hidden text-xxs italic text-ink/45">
+          <div className="whitespace-pre-wrap wrap-anywhere">
+            {item.text}
+            <span className="caret-blink">▍</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col">
+      <button
+        type="button"
+        className="inline-flex w-fit cursor-pointer items-center gap-1 text-xxs italic text-ink/35 transition-colors hover:text-ink/55"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />}
+        Thought
+      </button>
+      {open && (
+        <div className="mt-1 max-w-[95%] select-text whitespace-pre-wrap wrap-anywhere text-xxs italic text-ink/45">
+          {item.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function renderItem(item: ChatItem, onRespond: (id: string, allow: boolean) => void) {
   switch (item.kind) {
+    case "thinking":
+      return <ThinkingRow key={item.id} item={item} />;
     case "user":
       return (
         <div key={item.id} className="flex justify-end">
@@ -221,6 +259,20 @@ export default function Chat(props: ChatProps) {
     return joined.length > 48 ? joined.slice(0, 48) + "…" : joined;
   })();
 
+  // Liveness: cover every silent gap (session spawn, pre-first-token,
+  // between tools). Streaming items and in-flight tool rows already show
+  // their own activity; everything else gets the Working… row.
+  const tail = transcript[transcript.length - 1];
+  const showWorking =
+    agentRunning &&
+    (!tail ||
+      tail.kind === "user" ||
+      tail.kind === "system" ||
+      (tail.kind === "tool" && !!tail.result) ||
+      (tail.kind === "permission" && tail.verdict !== undefined) ||
+      (tail.kind === "agent" && !tail.streaming) ||
+      (tail.kind === "thinking" && !tail.streaming));
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -234,6 +286,12 @@ export default function Chat(props: ChatProps) {
           </div>
         )}
         {transcript.map((item) => renderItem(item, onRespondPermission))}
+        {showWorking && (
+          <div className="flex items-center gap-2 text-xxs text-ink/35">
+            <Spinner />
+            Working…
+          </div>
+        )}
       </div>
 
       <div className="mx-2.5 mb-2.5 mt-1.5 flex flex-none flex-col gap-[7px] rounded-[14px] bg-white p-2 shadow-island">

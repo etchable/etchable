@@ -62,6 +62,23 @@ referenced with `file:` specs.
 | `mcp` | Localhost MCP server (streamable HTTP, hand-rolled JSON-RPC on axum). Response-size discipline throughout: scoped, capped, summarized — a context-flooded agent is worse than no tool. |
 | `etchable` (`apps/desktop/src-tauri`) | Tauri app: shared state, single builder task, fs watcher, command surface, event fanout. |
 
+## The project format
+
+A project is a directory marked by `etch.toml` (see
+[decisions/0002](decisions/0002-etchable-project-format.md) for rationale):
+`pcb.toml` owns the workspace name and `[board]` entry (upstream's schema,
+closed to extension), `etch.toml` owns etchable-specific data, reusable
+blocks live in `components/<name>.zen` with an optional part card
+`components/<name>.toml` (description, mpn, manufacturer, datasheet,
+`[vendors.lcsc] part = "C…"`), and datasheets live at
+`datasheets/<name>.pdf`. Part selection resolves per component instance:
+`etch.toml [parts."<path>"]` overrides beat cards beat inline attributes,
+with the part-target rule mapping module-addressed selections onto their
+unique component descendant. `zen_build::project` implements
+load/resolve/scaffold; the app's `open_project`/`create_project` commands
+and the `get_parts` MCP tool sit on top. Card and manifest edits refresh
+via the watcher without a rebuild (`project-changed` event).
+
 ## Building from source
 
 Requirements: Rust (≥ 1.88), Node 20+, pnpm, and the `claude` CLI on `PATH`
@@ -73,7 +90,7 @@ pnpm install
 pnpm tauri dev              # from the repo root (or apps/desktop)
 ```
 
-Then open `examples/demo/top.zen` from the toolbar. First build of a board
+Then open `examples/demo/board.zen` from the toolbar. First build of a board
 fetches its package deps into `~/.pcb/cache`.
 
 Env knobs: `ETCHABLE_CLAUDE_BIN` (claude binary path), `ETCHABLE_MODEL`
@@ -83,8 +100,8 @@ startup — handy in dev), `RUST_LOG`.
 ### M0 pipeline CLI
 
 ```sh
-cargo run -p zen-build -- examples/demo/top.zen --pretty    # full schematic JSON
-cargo run -p zen-build -- examples/demo/top.zen --summary   # {ok, components, nets, ...}
+cargo run -p zen-build -- examples/demo/board.zen --pretty    # full schematic JSON
+cargo run -p zen-build -- examples/demo/board.zen --summary   # {ok, components, nets, ...}
 ```
 
 ## Status vs. plan

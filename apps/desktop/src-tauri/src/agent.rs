@@ -17,9 +17,19 @@ hardware description files. The user sees a live canvas of the schematic that \
 rebuilds automatically whenever you edit .zen files — you never need to run a \
 build command manually, but the `build` MCP tool returns fresh diagnostics if \
 you want them. Use the `etchable` MCP tools (get_selection, get_schematic, \
-get_instance, query_nets, get_diagnostics) to inspect the design instead of \
-parsing .zen files by hand; instance paths look like `root.SENSE_DIV.R1.R`. \
-When the user says 'this' or 'the selected part', call get_selection.";
+get_instance, query_nets, get_diagnostics, get_parts) to inspect the design \
+instead of parsing .zen files by hand; instance paths look like \
+`root.SENSE_DIV.R1.R`. When the user says 'this' or 'the selected part', \
+call get_selection.\n\
+Etchable projects are directories marked by etch.toml. Conventions: reusable \
+building blocks live in components/<name>.zen with an optional part card \
+components/<name>.toml (description, mpn, manufacturer, datasheet, and \
+[vendors.lcsc] with part = \"C…\"); datasheets live at datasheets/<name>.pdf \
+and you can Read them directly when discussing a part. Part selections \
+compose: etch.toml [parts.\"<instance-path>\"] overrides beat component \
+cards, which beat inline mpn/manufacturer attributes — get_parts shows the \
+resolved result with provenance. Keys in etch.toml are instance paths \
+without the root. prefix, never refdes.";
 
 pub async fn ensure_session(
     app: &AppHandle,
@@ -115,6 +125,9 @@ fn flatten(event: AgentEvent) -> Vec<Value> {
                     ContentBlock::Text { text } => {
                         out.push(json!({"type": "assistant_text", "text": text}))
                     }
+                    ContentBlock::Thinking { thinking, .. } if !thinking.is_empty() => {
+                        out.push(json!({"type": "thinking", "text": thinking}))
+                    }
                     ContentBlock::Thinking { .. } => {}
                     ContentBlock::ToolUse { id, name, input } => out.push(json!({
                         "type": "tool_use", "id": id, "name": name, "input": input,
@@ -153,19 +166,19 @@ fn flatten(event: AgentEvent) -> Vec<Value> {
             "durationMs": r.duration_ms,
         })],
         AgentEvent::Stream(s) => {
-            // Only surface incremental text; everything else arrives as
-            // complete messages anyway.
-            let delta_text = s
-                .event
-                .pointer("/delta/text")
-                .and_then(Value::as_str)
-                .filter(|_| {
-                    s.event.get("type").and_then(Value::as_str) == Some("content_block_delta")
-                });
-            match delta_text {
-                Some(text) => vec![json!({"type": "stream_delta", "text": text})],
-                None => vec![],
+            // Surface incremental text AND thinking; everything else
+            // arrives as complete messages anyway. Signature deltas and
+            // redacted thinking are deliberately ignored.
+            if s.event.get("type").and_then(Value::as_str) != Some("content_block_delta") {
+                return vec![];
             }
+            if let Some(text) = s.event.pointer("/delta/text").and_then(Value::as_str) {
+                return vec![json!({"type": "stream_delta", "text": text})];
+            }
+            if let Some(text) = s.event.pointer("/delta/thinking").and_then(Value::as_str) {
+                return vec![json!({"type": "thinking_delta", "text": text})];
+            }
+            vec![]
         }
         AgentEvent::ControlRequest(req) => match req.request {
             ControlRequestBody::CanUseTool {

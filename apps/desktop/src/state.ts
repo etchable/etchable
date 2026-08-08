@@ -12,6 +12,7 @@ import type {
   BuildView,
   Diag,
   PositionIn,
+  ProjectView,
 } from "./types";
 import { BUILD_PAYLOAD_VERSION } from "./types";
 import { transcriptReducer, type ChatItem } from "./chat/messages";
@@ -30,6 +31,7 @@ export function useEtchable() {
   const [boardError, setBoardError] = useState<string | null>(null);
   const [selection, setSelectionState] = useState<string[]>([]);
   const [agentRunning, setAgentRunning] = useState(false);
+  const [project, setProject] = useState<ProjectView | null>(null);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [transcript, dispatchTranscript] = useReducer(transcriptReducer, [] as ChatItem[]);
 
@@ -65,6 +67,7 @@ export function useEtchable() {
         setSource(s.source);
         setSelectionState(s.selection?.paths ?? []);
         setAgentRunning(s.agentRunning);
+        setProject(s.project ?? null);
         if (s.build) acceptBuild(s.build);
       })
       .catch((err) => console.error("get_state failed", err));
@@ -74,6 +77,12 @@ export function useEtchable() {
         setSource(e.payload.source);
         setBuilding(true);
         setBoardError(null);
+      }),
+    );
+
+    track(
+      listen<ProjectView>("project-changed", (e) => {
+        setProject(e.payload);
       }),
     );
 
@@ -108,8 +117,35 @@ export function useEtchable() {
   const openBoard = useCallback(async (path: string) => {
     setBoardError(null);
     setBuilding(true);
+    setProject(null);
     try {
       await invoke<BuildSummary>("select_board", { path });
+    } catch (err) {
+      setBoardError(String(err));
+      setBuilding(false);
+    }
+  }, []);
+
+  const openProject = useCallback(async (path: string) => {
+    setBoardError(null);
+    setBuilding(true);
+    try {
+      await invoke<BuildSummary>("open_project", { path });
+      const s = await invoke<BackendState>("get_state");
+      setProject(s.project ?? null);
+    } catch (err) {
+      setBoardError(String(err));
+      setBuilding(false);
+    }
+  }, []);
+
+  const createProject = useCallback(async (parent: string, name: string) => {
+    setBoardError(null);
+    setBuilding(true);
+    try {
+      await invoke<BuildSummary>("create_project", { parent, name });
+      const s = await invoke<BackendState>("get_state");
+      setProject(s.project ?? null);
     } catch (err) {
       setBoardError(String(err));
       setBuilding(false);
@@ -151,10 +187,13 @@ export function useEtchable() {
     const trimmed = text.trim();
     if (!trimmed) return;
     dispatchTranscript({ type: "user", text: trimmed });
+    // Optimistic: the first session spawn can take seconds, and the
+    // liveness row keys off agentRunning.
+    setAgentRunning(true);
     try {
       await invoke("send_message", { text: trimmed });
-      setAgentRunning(true);
     } catch (err) {
+      setAgentRunning(false);
       dispatchTranscript({ type: "system", text: String(err), isError: true });
     }
   }, []);
@@ -218,6 +257,7 @@ export function useEtchable() {
 
   return {
     source,
+    project,
     build,
     building,
     boardError,
@@ -229,6 +269,8 @@ export function useEtchable() {
     counts,
     display,
     openBoard,
+    openProject,
+    createProject,
     rebuild,
     setSelection,
     savePositions,

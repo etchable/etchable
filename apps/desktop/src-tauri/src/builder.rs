@@ -14,6 +14,7 @@ use crate::state::{AppState, BuildRequest, BuildView, SharedAppState};
 
 pub const BUILD_STARTED: &str = "build-started";
 pub const BUILD_FINISHED: &str = "build-finished";
+pub const PROJECT_CHANGED: &str = "project-changed";
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
@@ -32,16 +33,38 @@ pub fn spawn_builder(
         let mut source: Option<PathBuf> = None;
 
         loop {
-            let BuildRequest { reload, reply } = tokio::select! {
+            let BuildRequest {
+                reload,
+                reload_project,
+                build,
+                reply,
+            } = tokio::select! {
                 req = build_rx.recv() => match req {
                     Some(r) => r,
                     None => break,
                 },
                 req = rebuild_rx.recv() => match req {
-                    Some(reply) => BuildRequest { reload: false, reply: Some(reply) },
+                    Some(reply) => BuildRequest {
+                        reload: false,
+                        reload_project: false,
+                        build: true,
+                        reply: Some(reply),
+                    },
                     None => break,
                 },
             };
+
+            // Project refresh runs first (and alone when `build` is false):
+            // re-read etch.toml + cards, retarget the source if pcb.toml
+            // renamed the entry, emit project-changed. No build events fire
+            // for project-only refreshes — the canvas doesn't flash.
+            if reload_project {
+                refresh_project(&app, &state).await;
+            }
+            if !build {
+                debug_assert!(reply.is_none(), "reply without build");
+                continue;
+            }
 
             // The canvas state names the board; (re)open lazily so
             // `select_board` only has to update state and poke us.
@@ -117,6 +140,58 @@ pub fn spawn_builder(
     });
 }
 
+/// Re-read the project manifests. Never clears a live project on failure —
+/// the failure is appended to the existing doc's problems instead.
+async fn refresh_project(app: &AppHandle, state: &SharedAppState) {
+    let Some(root) = state
+        .canvas
+        .read(|s| s.project.as_ref().map(|p| p.root.clone()))
+    else {
+        return;
+    };
+
+    let old_entry = state
+        .canvas
+        .read(|s| s.project.as_ref().and_then(|p| p.board.clone()));
+
+    let loaded = {
+        let root = root.clone();
+        tokio::task::spawn_blocking(move || zen_build::load_project(&root)).await
+    };
+    let view = match loaded {
+        Ok(Ok(doc)) => {
+            // If pcb.toml renamed the entry and the canvas was on the old
+            // one, follow the manifest.
+            if let Some(new_board) = &doc.board {
+                let new_abs = doc.root.join(new_board);
+                let old_abs = old_entry.as_ref().map(|b| root.join(b));
+                state.canvas.write(|s| {
+                    if s.source == old_abs && s.source.as_ref() != Some(&new_abs) {
+                        s.source = Some(new_abs.clone());
+                    }
+                });
+            }
+            state.canvas.write(|s| {
+                s.project = Some(doc);
+                s.project.as_ref().map(crate::state::ProjectView::from)
+            })
+        }
+        Ok(Err(e)) => state.canvas.write(|s| {
+            if let Some(p) = &mut s.project {
+                p.problems.push(format!("project reload failed: {e:#}"));
+            }
+            s.project.as_ref().map(crate::state::ProjectView::from)
+        }),
+        Err(e) => {
+            tracing::warn!("project reload panicked: {e}");
+            None
+        }
+    };
+    if let Some(view) = view {
+        let _ = app.emit(PROJECT_CHANGED, &view);
+    }
+}
+
 /// Surface infrastructure failures as a synthetic error diagnostic so the UI
 /// has one channel for "the build is unhappy"; keep the last good schematic.
 fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, msg: String) {
@@ -177,20 +252,8 @@ pub fn start_watcher(state: &SharedAppState, root: &Path) -> anyhow::Result<()> 
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
                 }
             }
-            match relevant {
-                Relevance::None => continue,
-                Relevance::Sources => {
-                    let _ = build_tx.blocking_send(BuildRequest {
-                        reload: false,
-                        reply: None,
-                    });
-                }
-                Relevance::Manifest => {
-                    let _ = build_tx.blocking_send(BuildRequest {
-                        reload: true,
-                        reply: None,
-                    });
-                }
+            if let Some(req) = relevant.into_request() {
+                let _ = build_tx.blocking_send(req);
             }
         }
     });
@@ -199,28 +262,46 @@ pub fn start_watcher(state: &SharedAppState, root: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Relevance {
-    None,
-    Sources,
-    Manifest,
+/// What a batch of fs events touched. Orthogonal — a debounce window can
+/// contain zen edits AND card edits.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+struct Relevance {
+    /// `*.zen` — rebuild.
+    sources: bool,
+    /// `pcb.toml` — reopen the workspace (deps/entry may have changed).
+    manifest: bool,
+    /// `etch.toml`, component cards, datasheets — re-read the project.
+    project: bool,
 }
 
 impl Relevance {
     fn merge(self, other: Relevance) -> Relevance {
-        match (self, other) {
-            (Relevance::Manifest, _) | (_, Relevance::Manifest) => Relevance::Manifest,
-            (Relevance::Sources, _) | (_, Relevance::Sources) => Relevance::Sources,
-            _ => Relevance::None,
+        Relevance {
+            sources: self.sources || other.sources,
+            manifest: self.manifest || other.manifest,
+            project: self.project || other.project,
         }
+    }
+
+    fn into_request(self) -> Option<BuildRequest> {
+        if self == Relevance::default() {
+            return None;
+        }
+        Some(BuildRequest {
+            reload: self.manifest,
+            // pcb.toml also carries the project's name/entry.
+            reload_project: self.project || self.manifest,
+            build: self.sources || self.manifest,
+            reply: None,
+        })
     }
 }
 
 fn classify(event: &notify::Result<notify::Event>) -> Relevance {
     let Ok(event) = event else {
-        return Relevance::None;
+        return Relevance::default();
     };
-    let mut relevance = Relevance::None;
+    let mut relevance = Relevance::default();
     for path in &event.paths {
         // Ignore anything inside hidden dirs (.pcb cache, .git).
         if path.components().any(|c| {
@@ -230,10 +311,17 @@ fn classify(event: &notify::Result<notify::Event>) -> Relevance {
         }) {
             continue;
         }
+        let in_datasheets = path
+            .components()
+            .any(|c| c.as_os_str().to_str() == Some("datasheets"));
         if path.file_name().is_some_and(|f| f == "pcb.toml") {
-            relevance = relevance.merge(Relevance::Manifest);
+            relevance.manifest = true;
         } else if path.extension().is_some_and(|e| e == "zen") {
-            relevance = relevance.merge(Relevance::Sources);
+            relevance.sources = true;
+        } else if path.extension().is_some_and(|e| e == "toml") || in_datasheets {
+            // etch.toml, component cards, or datasheet presence (cards
+            // default their datasheet path from the file's existence).
+            relevance.project = true;
         }
     }
     relevance
@@ -245,10 +333,74 @@ impl AppState {
         self.build_tx
             .send(BuildRequest {
                 reload: false,
+                reload_project: false,
+                build: true,
                 reply: Some(tx),
             })
             .await
             .map_err(|_| "builder stopped".to_string())?;
         rx.await.map_err(|_| "build reply dropped".to_string())?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(paths: &[&str]) -> notify::Result<notify::Event> {
+        let mut ev = notify::Event::new(notify::EventKind::Modify(
+            notify::event::ModifyKind::Any,
+        ));
+        ev.paths = paths.iter().map(std::path::PathBuf::from).collect();
+        Ok(ev)
+    }
+
+    #[test]
+    fn classify_routes_by_file_kind() {
+        assert_eq!(
+            classify(&event(&["/p/board.zen"])),
+            Relevance { sources: true, ..Default::default() }
+        );
+        assert_eq!(
+            classify(&event(&["/p/pcb.toml"])),
+            Relevance { manifest: true, ..Default::default() }
+        );
+        assert_eq!(
+            classify(&event(&["/p/etch.toml"])),
+            Relevance { project: true, ..Default::default() }
+        );
+        assert_eq!(
+            classify(&event(&["/p/components/ldo.toml"])),
+            Relevance { project: true, ..Default::default() }
+        );
+        assert_eq!(
+            classify(&event(&["/p/datasheets/ldo.pdf"])),
+            Relevance { project: true, ..Default::default() }
+        );
+        // Hidden dirs ignored; unknown files ignored.
+        assert_eq!(classify(&event(&["/p/.pcb/x.zen"])), Relevance::default());
+        assert_eq!(classify(&event(&["/p/readme.md"])), Relevance::default());
+    }
+
+    #[test]
+    fn merged_relevance_builds_the_right_request() {
+        let merged = classify(&event(&["/p/board.zen"]))
+            .merge(classify(&event(&["/p/components/ldo.toml"])));
+        let req = merged.into_request().expect("relevant");
+        assert!(req.build && req.reload_project && !req.reload);
+
+        // Manifest changes imply project reload + workspace reload + build.
+        let req = classify(&event(&["/p/pcb.toml"]))
+            .into_request()
+            .expect("relevant");
+        assert!(req.build && req.reload && req.reload_project);
+
+        // Project-only: no build.
+        let req = classify(&event(&["/p/etch.toml"]))
+            .into_request()
+            .expect("relevant");
+        assert!(!req.build && req.reload_project && !req.reload);
+
+        assert!(Relevance::default().into_request().is_none());
     }
 }

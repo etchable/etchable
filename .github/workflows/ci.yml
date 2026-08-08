@@ -47,7 +47,7 @@ jobs:
 
       - name: Validate circuit-json emission against published schemas
         run: |
-          cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json --offline \
+          cargo run -q -p zen-build -- examples/demo/board.zen --circuit-json --offline \
             | pnpm run --silent validate:circuit-json
 
       - name: Symbol geometry table matches schematic-symbols pin

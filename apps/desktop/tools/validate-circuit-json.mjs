@@ -5,7 +5,7 @@
 // every referenced id resolves through id_map, and every symbol_name is a
 // real schematic-symbols key. Reads a file path argv[1] or stdin.
 //
-//   cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json \
+//   cargo run -q -p zen-build -- examples/demo/board.zen --circuit-json \
 //     | node tools/validate-circuit-json.mjs
 
 import { readFileSync } from "node:fs";

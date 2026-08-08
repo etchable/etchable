@@ -14,7 +14,7 @@ fn builds_demo_board() {
         eprintln!("skipping: lib/std not vendored (run scripts/fetch-stdlib.sh)");
         return;
     }
-    let board = repo_root.join("examples/demo/top.zen");
+    let board = repo_root.join("examples/demo/board.zen");
 
     let ws = Workspace::open(&board, false).expect("workspace opens");
     assert!(ws.root().join("pcb.toml").exists());

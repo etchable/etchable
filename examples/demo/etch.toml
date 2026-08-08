@@ -1,0 +1,12 @@
+# etch.toml marks this directory as an etchable project.
+version = 1
+
+# Board-level part overrides compose on top of component cards and inline
+# attributes. Keys are instance paths without the `root.` prefix.
+[parts."SENSE_DIV.R1"]
+mpn = "RC0402FR-07100KL"
+manufacturer = "YAGEO"
+
+[parts."SENSE_DIV.R1".vendors.lcsc]
+part = "C25741"
+basic = true

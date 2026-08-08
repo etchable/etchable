@@ -15,7 +15,7 @@ the prior plan.
 ## G1 — position source. Chosen branch: **B** (layout pass in zen-build)
 
 Findings, from inspecting `pcb-sch` at the pinned rev (`v0.4.25`, checkout
-`c8982e9`) and building `examples/demo/top.zen` plus diodeinc's
+`c8982e9`) and building `examples/demo/board.zen` plus diodeinc's
 `examples/AD7171` through our pipeline:
 
 - `pcb_sch` **computes no positions**. `Schematic.symbol_positions` is
@@ -132,7 +132,7 @@ upgrade piecemeal — bump the whole set and re-run the validation harness.
 - `apps/desktop/tools/validate-circuit-json.mjs` checks emitter output against the
   published circuit-json zod schemas + id_map completeness + symbol_name
   validity; wired into `.github/workflows/ci.yml`.
-- Smoke check board: **examples/demo/top.zen** (50 elements). Rendered via
+- Smoke check board: **examples/demo/board.zen** (50 elements). Rendered via
   `circuit-to-svg`'s `convertCircuitJsonToSchematicSvg` — the same engine
   circuitjson.com and the viewer embed — and visually inspected: LED glyph,
   box resistors with values, net-label flags on all 8 pins, dashed module

@@ -4,6 +4,9 @@ import type { Diag } from "../types";
 
 type ProblemsProps = {
   diagnostics: Diag[];
+  /// Project-level issues (manifest/card parse problems) — plain strings,
+  /// not build diagnostics.
+  projectProblems?: string[];
   onSelectDiag: (diag: Diag) => void;
 };
 
@@ -49,7 +52,7 @@ function DiagRow({ diag, onClick }: { diag: Diag; onClick: () => void }) {
   );
 }
 
-export default function Problems({ diagnostics, onSelectDiag }: ProblemsProps) {
+export default function Problems({ diagnostics, projectProblems = [], onSelectDiag }: ProblemsProps) {
   const [showAdvice, setShowAdvice] = useState(false);
 
   const groups = useMemo(() => {
@@ -66,13 +69,35 @@ export default function Problems({ diagnostics, onSelectDiag }: ProblemsProps) {
   }, [diagnostics]);
 
   const empty =
-    groups.errors.length === 0 && groups.warnings.length === 0 && groups.advice.length === 0;
+    groups.errors.length === 0 &&
+    groups.warnings.length === 0 &&
+    groups.advice.length === 0 &&
+    projectProblems.length === 0;
 
   const groupTitle = "px-0.5 pb-1 font-mono text-[10px] uppercase tracking-wider";
 
   return (
     <div className="scroll-minimal flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2.5">
       {empty && <div className="m-auto text-xs text-ink/35">No problems — clean build.</div>}
+
+      {projectProblems.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          <div className={`${groupTitle} text-warn-deep`}>
+            {projectProblems.length} project problem{projectProblems.length === 1 ? "" : "s"}
+          </div>
+          {projectProblems.map((p, i) => (
+            <div
+              key={`p${i}`}
+              className="flex items-start gap-[9px] rounded-md px-2 py-[5px] text-[11.5px]"
+            >
+              <span className="flex w-3.5 flex-none justify-center pt-0.5 text-warn-deep">
+                <IconWarning size={12} />
+              </span>
+              <span className="select-text wrap-anywhere">{p}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {groups.errors.length > 0 && (
         <div className="flex flex-col gap-0.5">

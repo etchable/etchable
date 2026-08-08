@@ -10,7 +10,29 @@ use crate::{agent, builder};
 
 type CmdResult<T> = Result<T, String>;
 
-/// Open a .zen board: set it active, start the watcher, kick a build.
+/// Shared tail of every open flow: point the canvas at a board file, build,
+/// then watch from the resolved workspace root.
+pub async fn open_board_file(
+    state: &SharedAppState,
+    entry: PathBuf,
+    project: Option<zen_build::ProjectDoc>,
+) -> Result<BuildSummary, String> {
+    state.canvas.write(|s| {
+        s.source = Some(entry);
+        s.selection = Default::default();
+        s.project = project;
+    });
+
+    let summary = state.request_build_and_wait().await?;
+
+    // Watch from the resolved workspace root (set by the builder on open).
+    if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
+        builder::start_watcher(state, &root).map_err(|e| e.to_string())?;
+    }
+    Ok(summary)
+}
+
+/// Open a bare .zen board (advanced/dev path — no project attached).
 #[tauri::command]
 pub async fn select_board(
     app: AppHandle,
@@ -22,21 +44,60 @@ pub async fn select_board(
         return Err(format!("not a .zen file: {}", path.display()));
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-
-    state.canvas.write(|s| {
-        s.source = Some(path.clone());
-        s.selection = Default::default();
-    });
-
-    let summary = state.request_build_and_wait().await?;
-
-    // Watch from the resolved workspace root (set by the builder on open).
-    if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
-        builder::start_watcher(&state, &root).map_err(|e| e.to_string())?;
-    }
-
     let _ = app;
-    Ok(summary)
+    open_board_file(&state, path, None).await
+}
+
+/// Open an etchable project directory (the primary flow): requires
+/// `etch.toml`, resolves the board entry, loads part data.
+#[tauri::command]
+pub async fn open_project(
+    state: State<'_, SharedAppState>,
+    path: String,
+) -> CmdResult<BuildSummary> {
+    let dir = PathBuf::from(path);
+    if !dir.is_dir() {
+        return Err(format!("not a directory: {}", dir.display()));
+    }
+    let doc = {
+        let dir = dir.clone();
+        tauri::async_runtime::spawn_blocking(move || zen_build::load_project(&dir))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?
+    };
+    let Some(board) = &doc.board else {
+        let why = doc
+            .problems
+            .iter()
+            .find(|p| p.contains("board entry"))
+            .cloned()
+            .unwrap_or_else(|| "cannot determine the board entry".into());
+        return Err(why);
+    };
+    let entry = doc.root.join(board);
+    if !entry.is_file() || entry.extension().is_none_or(|e| e != "zen") {
+        return Err(format!("board entry is not a .zen file: {}", entry.display()));
+    }
+    open_board_file(&state, entry, Some(doc)).await
+}
+
+/// Scaffold a fresh project and open it.
+#[tauri::command]
+pub async fn create_project(
+    state: State<'_, SharedAppState>,
+    parent: String,
+    name: String,
+) -> CmdResult<BuildSummary> {
+    let parent = PathBuf::from(parent);
+    let root = {
+        let (parent, name) = (parent.clone(), name.clone());
+        tauri::async_runtime::spawn_blocking(move || zen_build::scaffold_project(&parent, &name))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?
+    };
+    open_project(state, root.display().to_string()).await
 }
 
 /// Snapshot for (re)mounting UIs.
@@ -49,6 +110,7 @@ pub async fn get_state(state: State<'_, SharedAppState>) -> CmdResult<UiStateSna
         selection: s.selection.clone(),
         agent_running,
         build: s.build.as_ref().map(BuildView::from),
+        project: s.project.as_ref().map(crate::state::ProjectView::from),
     }))
 }
 
@@ -202,6 +264,8 @@ pub async fn reload_workspace(state: State<'_, SharedAppState>) -> CmdResult<()>
         .build_tx
         .send(BuildRequest {
             reload: true,
+            reload_project: true,
+            build: true,
             reply: None,
         })
         .await

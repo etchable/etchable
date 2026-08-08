@@ -145,3 +145,10 @@ pub(crate) fn resolve(path: &Path, offline: bool) -> Result<ResolutionResult> {
 pub(crate) fn workspace_root(resolution: &ResolutionResult) -> PathBuf {
     resolution.workspace_info.root.clone()
 }
+
+impl EvalState {
+    /// The materialized stdlib dir (`<root>/.pcb/stdlib`).
+    pub(crate) fn stdlib_dir(&self) -> PathBuf {
+        self.resolution.workspace_info.workspace_stdlib_dir()
+    }
+}

@@ -10,6 +10,7 @@ use crate::state::SharedState;
 const MAX_INSTANCES_PER_RESPONSE: usize = 300;
 const MAX_DIAGNOSTICS: usize = 100;
 const MAX_NETS: usize = 200;
+const MAX_PARTS: usize = 200;
 
 pub struct ToolDef {
     pub name: &'static str,
@@ -84,6 +85,17 @@ pub fn tool_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "get_parts",
+            description: "Resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance. Requires an open etchable project.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Instance path (e.g. root.SENSE_DIV) or refdes (e.g. R1) to scope to. Defaults to the whole board."}
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
             name: "get_selection",
             description: "What the user currently has selected on the canvas (instance paths / net names, plus an optional note). Call this when the user says 'this', 'these', or refers to their selection.",
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
@@ -118,7 +130,19 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
         }),
         "get_schematic" => with_build(state, |build| get_schematic(build, args)),
         "get_circuit_json" => with_build(state, |build| get_circuit_json(build, args)),
-        "get_instance" => with_build(state, |build| get_instance(build, args)),
+        "get_instance" => state.read(|s| match &s.build {
+            Some(build) => get_instance(build, s.project.as_ref(), args),
+            None => err("no build available yet — open a board or call build first".into()),
+        }),
+        "get_parts" => state.read(|s| {
+            let Some(project) = &s.project else {
+                return err("no project open — get_parts requires an etchable project".into());
+            };
+            match &s.build {
+                Some(build) => get_parts(project, build, args),
+                None => err("no build available yet — open a board or call build first".into()),
+            }
+        }),
         "query_nets" => with_build(state, |build| query_nets(build, args)),
         "get_selection" => {
             let (selection, build_exists) =
@@ -376,7 +400,11 @@ fn get_circuit_json(build: &BuildOutput, args: &Value) -> (String, bool) {
     ok(result)
 }
 
-fn get_instance(build: &BuildOutput, args: &Value) -> (String, bool) {
+fn get_instance(
+    build: &BuildOutput,
+    project: Option<&zen_build::ProjectDoc>,
+    args: &Value,
+) -> (String, bool) {
     let Some(sch) = &build.schematic else {
         return err("build produced no schematic".into());
     };
@@ -387,6 +415,12 @@ fn get_instance(build: &BuildOutput, args: &Value) -> (String, bool) {
         return err(format!("no such instance: {path_arg}"));
     };
     let inst = sch.instance(path).expect("resolve_path returned valid key");
+
+    // Resolved part selection, when this board belongs to a project.
+    let part = project.and_then(|p| {
+        let (parts, _) = zen_build::resolve_parts(p, sch);
+        parts.get(path).cloned()
+    });
 
     // Attach the full net detail for each connected pin.
     let pin_detail: Vec<_> = inst
@@ -413,6 +447,44 @@ fn get_instance(build: &BuildOutput, args: &Value) -> (String, bool) {
         "attributes": inst.attributes,
         "children": inst.children,
         "pins": pin_detail,
+        "part": part,
+    }))
+}
+
+/// Resolved part selections, optionally scoped to an instance subtree.
+fn get_parts(
+    project: &zen_build::ProjectDoc,
+    build: &BuildOutput,
+    args: &Value,
+) -> (String, bool) {
+    let Some(sch) = &build.schematic else {
+        return err("build produced no schematic".into());
+    };
+    let scope = match args.get("scope").and_then(Value::as_str) {
+        Some(s) => match sch.resolve_path(s) {
+            Some(p) => Some(p.to_string()),
+            None => return err(format!("no such instance: {s}")),
+        },
+        None => None,
+    };
+
+    let (parts, problems) = zen_build::resolve_parts(project, sch);
+    let prefix = scope.as_ref().map(|s| format!("{s}."));
+    let selected: Vec<&zen_build::ResolvedPart> = parts
+        .values()
+        .filter(|p| match (&scope, &prefix) {
+            (Some(s), Some(pre)) => p.instance == *s || p.instance.starts_with(pre),
+            _ => true,
+        })
+        .collect();
+
+    let total = selected.len();
+    let capped: Vec<_> = selected.into_iter().take(MAX_PARTS).collect();
+    ok(json!({
+        "parts": capped,
+        "total": total,
+        "truncated": if total > MAX_PARTS { Some(total - MAX_PARTS) } else { None },
+        "problems": problems,
     }))
 }
 

@@ -16,7 +16,7 @@ the trajectory).
 ## Commands
 
 - `cargo test --workspace` — all Rust tests (fast; pcb deps are cached)
-- `cargo run -p zen-build -- examples/demo/top.zen --pretty` — eval a board,
+- `cargo run -p zen-build -- examples/demo/board.zen --pretty` — eval a board,
   dump schematic JSON (the M0 CLI; great for inspecting pipeline output)
 - `pnpm --filter @etchable/desktop build` — typecheck (tsc strict) + bundle
   the frontend (`pnpm desktop:build` at the root does the same)
@@ -56,6 +56,17 @@ the trajectory).
   together), `agent-event` (flat tagged union, camelCase — see
   `apps/desktop/src-tauri/src/agent.rs::flatten`). UI mirrors live in
   `apps/desktop/src/types.ts`; keep both sides in sync when touching either.
+- Project format (docs/decisions/0002): a project dir is marked by
+  `etch.toml`; `pcb.toml` stays byte-compatible with upstream
+  (deny_unknown_fields — NEVER add custom keys to it) and owns name +
+  `[board]` entry. Part selection: etch.toml `[parts."<path>"]` overrides >
+  `components/<name>.toml` cards > inline attrs, with the part-target rule
+  (module-addressed selections land on the unique component descendant).
+  File keys are root-stripped paths (like `# pcb:sch`); APIs emit
+  `root.`-prefixed. etch.toml/card parsing is TOLERANT (problems, never
+  failures). `zen_build::project` is the only implementation; watcher
+  routes `*.toml`/datasheet changes to a project-only refresh
+  (`project-changed` event, no build flash).
 - Embedded-agent permissions: sessions spawn with `--allowedTools`
   auto-allowing the app's own MCP server (`mcp__etchable`) plus `Read`,
   `Edit`, and `Write` inside the open workspace root — those never show
@@ -89,5 +100,5 @@ the trajectory).
   packages is
   `apps/desktop/src/circuit/`. tscircuit npm deps are pinned exact and bumped
   as a set, then re-validated:
-  `cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json | pnpm run --silent validate:circuit-json`.
+  `cargo run -q -p zen-build -- examples/demo/board.zen --circuit-json | pnpm run --silent validate:circuit-json`.
   See docs/decisions/0001-circuit-json-renderer.md.

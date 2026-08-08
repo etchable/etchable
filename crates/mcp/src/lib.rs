@@ -129,7 +129,17 @@ mod tests {
         assert!(names.contains(&"get_schematic"));
         assert!(names.contains(&"get_selection"));
         assert!(names.contains(&"get_circuit_json"));
-        assert_eq!(names.len(), 7);
+        assert!(names.contains(&"get_parts"));
+        assert_eq!(names.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn get_parts_requires_a_project() {
+        let state = fixture_state();
+        let (text, is_error) =
+            tools::call_tool(&state, "get_parts", &serde_json::json!({})).await;
+        assert!(is_error);
+        assert!(text.contains("no project open"), "{text}");
     }
 
     #[tokio::test]

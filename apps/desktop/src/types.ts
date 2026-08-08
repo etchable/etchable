@@ -83,12 +83,21 @@ export type BuildSummary = {
   warnings: number;
 };
 
+/// Project summary (camelCase, from get_state / "project-changed").
+export type ProjectView = {
+  name: string;
+  root: string;
+  board: string | null;
+  problems: string[];
+};
+
 export type BackendState = {
   workspaceRoot: string | null;
   source: string | null;
   selection: { paths: string[]; note?: string };
   agentRunning: boolean;
   build: BuildView | null;
+  project: ProjectView | null;
 };
 
 // ---- Agent events (camelCase, flat tagged union) ----
@@ -97,6 +106,8 @@ export type AgentEvent =
   | { type: "init"; sessionId?: string; model?: string }
   | { type: "assistant_text"; text: string }
   | { type: "stream_delta"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "thinking_delta"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; toolUseId: string; content: string; isError: boolean }
   | { type: "permission_request"; requestId: string; toolName: string; input: unknown }

@@ -39,22 +39,40 @@ pub fn run() {
 
             builder::spawn_builder(handle.clone(), app_state.clone(), build_rx, rebuild_rx);
 
-            // Dev nicety: ETCHABLE_OPEN=path/to/board.zen opens a board at
+            // Dev nicety: ETCHABLE_OPEN=<board.zen or project dir> opens at
             // startup (relative to the invocation cwd).
-            if let Ok(board) = std::env::var("ETCHABLE_OPEN") {
+            if let Ok(target) = std::env::var("ETCHABLE_OPEN") {
                 let state = app_state.clone();
                 tauri::async_runtime::spawn(async move {
-                    match std::path::PathBuf::from(&board).canonicalize() {
+                    match std::path::PathBuf::from(&target).canonicalize() {
                         Ok(path) => {
-                            state.canvas.write(|s| s.source = Some(path));
-                            if let Err(e) = state.request_build_and_wait().await {
+                            let (entry, project) = if path.is_dir() {
+                                match zen_build::load_project(&path) {
+                                    Ok(doc) => match &doc.board {
+                                        Some(b) => (doc.root.join(b), Some(doc)),
+                                        None => {
+                                            tracing::error!(
+                                                "ETCHABLE_OPEN: no board entry: {:?}",
+                                                doc.problems
+                                            );
+                                            return;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        tracing::error!("ETCHABLE_OPEN: {e:#}");
+                                        return;
+                                    }
+                                }
+                            } else {
+                                (path, None)
+                            };
+                            if let Err(e) =
+                                commands::open_board_file(&state, entry, project).await
+                            {
                                 tracing::error!("ETCHABLE_OPEN build failed: {e}");
                             }
-                            if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
-                                let _ = builder::start_watcher(&state, &root);
-                            }
                         }
-                        Err(e) => tracing::error!("ETCHABLE_OPEN: bad path {board}: {e}"),
+                        Err(e) => tracing::error!("ETCHABLE_OPEN: bad path {target}: {e}"),
                     }
                 });
             }
@@ -92,6 +110,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::select_board,
+            commands::open_project,
+            commands::create_project,
             commands::get_state,
             commands::set_selection,
             commands::save_positions,

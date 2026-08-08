@@ -22,6 +22,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 pcb-zen = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 pcb-zen-core = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 pcb-sch = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
+pcb-eda = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
+pcb-component-gen = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 
 [profile.dev.package."*"]
 # The pcb-* / starlark dependency tree is huge; optimize deps even in dev so

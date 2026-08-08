@@ -59,7 +59,7 @@ You'll need:
    and watch the canvas update.
 
 New to Zener? A small demo board ships in this repo at
-`examples/demo/top.zen`, and the [pcb project](https://github.com/diodeinc/pcb)
+`examples/demo/board.zen`, and the [pcb project](https://github.com/diodeinc/pcb)
 documents the language.
 
 ## Early days

@@ -24,18 +24,42 @@ export default function App() {
     Math.max(360, Math.round(window.innerWidth * 0.3)),
   );
   const [pastedPath, setPastedPath] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [projectName, setProjectName] = useState("");
   const dividerDragging = useRef(false);
 
-  const pickBoard = async () => {
+  const pickProject = async () => {
     try {
-      const picked = await open({
-        multiple: false,
-        filters: [{ name: "Zener", extensions: ["zen"] }],
-      });
-      if (typeof picked === "string") void app.openBoard(picked);
+      const picked = await open({ multiple: false, directory: true });
+      if (typeof picked === "string") void app.openProject(picked);
     } catch (err) {
       console.error("open dialog failed", err);
     }
+  };
+
+  const createProjectAt = async () => {
+    const name = projectName.trim();
+    if (!name) return;
+    try {
+      const parent = await open({
+        multiple: false,
+        directory: true,
+        title: "Choose where to create the project",
+      });
+      if (typeof parent === "string") {
+        setCreating(false);
+        void app.createProject(parent, name);
+      }
+    } catch (err) {
+      console.error("open dialog failed", err);
+    }
+  };
+
+  const openPasted = (raw: string) => {
+    const path = raw.trim();
+    if (!path) return;
+    if (path.endsWith(".zen")) void app.openBoard(path);
+    else void app.openProject(path);
   };
 
   const handleSelectDiag = (diag: Diag) => {
@@ -63,7 +87,8 @@ export default function App() {
   };
 
   const { counts, building, build, source } = app;
-  const problemCount = counts.errors + counts.warnings;
+  const problemCount =
+    counts.errors + counts.warnings + (app.project?.problems.length ?? 0);
   const hasBoard = build !== null || source !== null;
 
   const pill =
@@ -75,14 +100,21 @@ export default function App() {
         <span className="mr-0.5 font-display text-sm font-extrabold tracking-tight">
           etchable
         </span>
-        {source && (
+        {app.project ? (
+          <span
+            className="max-w-[38vw] truncate rounded-full bg-ink/5 px-2.5 py-[3px] font-mono text-[10.5px] text-ink/55"
+            title={app.project.root}
+          >
+            {app.project.name}
+          </span>
+        ) : source ? (
           <span
             className="max-w-[38vw] truncate rounded-full bg-ink/5 px-2.5 py-[3px] font-mono text-[10.5px] text-ink/55"
             title={source}
           >
             {source.split("/").slice(-2).join("/")}
           </span>
-        )}
+        ) : null}
         <span className="flex-1" />
         {building ? (
           <span className={`${pill} bg-ink/5 text-ink/55`}>
@@ -104,8 +136,8 @@ export default function App() {
         <Button variant="ghost" size="sm" disabled={!source || building} onClick={() => void app.rebuild()}>
           Rebuild
         </Button>
-        <Button variant="copper" size="sm" onClick={() => void pickBoard()}>
-          Open board…
+        <Button variant="copper" size="sm" onClick={() => void pickProject()}>
+          Open project…
         </Button>
       </header>
 
@@ -180,7 +212,11 @@ export default function App() {
                   onClearSelection={() => app.setSelection([])}
                 />
               ) : (
-                <Problems diagnostics={app.diagnostics} onSelectDiag={handleSelectDiag} />
+                <Problems
+                  diagnostics={app.diagnostics}
+                  projectProblems={app.project?.problems}
+                  onSelectDiag={handleSelectDiag}
+                />
               )}
             </div>
           </aside>
@@ -195,21 +231,43 @@ export default function App() {
           <p className="mt-2 text-[13px] text-ink/55">
             A friendly little tool for designing circuit boards.
           </p>
-          <Button variant="copper" size="lg" className="mt-8" onClick={() => void pickBoard()}>
-            Open a board
-          </Button>
+          <div className="mt-8 flex items-center gap-3">
+            <Button variant="copper" size="lg" onClick={() => void pickProject()}>
+              Open a project
+            </Button>
+            <Button variant="ghost" onClick={() => setCreating((v) => !v)}>
+              New project
+            </Button>
+          </div>
+          {creating && (
+            <div className="mt-4 flex items-center gap-2">
+              <Input
+                inputSize="sm"
+                type="text"
+                placeholder="project name"
+                autoFocus
+                className="w-52"
+                value={projectName}
+                onChange={(e) => setProjectName(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void createProjectAt();
+                }}
+              />
+              <Button size="sm" disabled={!projectName.trim()} onClick={() => void createProjectAt()}>
+                Choose location…
+              </Button>
+            </div>
+          )}
           <Input
             mono
             inputSize="sm"
             type="text"
-            placeholder="…or paste a file path"
-            className="mt-4 w-72 text-center opacity-60 transition-opacity focus:opacity-100"
+            placeholder="…or paste a project or board path"
+            className="mt-4 w-80 text-center opacity-60 transition-opacity focus:opacity-100"
             value={pastedPath}
             onChange={(e) => setPastedPath(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && pastedPath.trim()) {
-                void app.openBoard(pastedPath.trim());
-              }
+              if (e.key === "Enter") openPasted(pastedPath);
             }}
           />
           {app.boardError && (
