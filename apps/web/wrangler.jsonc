@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "etchable-web",
+  "account_id": "6f44034f0a06f2db7a6575473a27c4ce",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "etchable-web",
+      "database_id": "eb082058-51d2-4941-bd6b-edfc99a18f2d",
+      "migrations_dir": "drizzle"
+    }
+  ]
+}

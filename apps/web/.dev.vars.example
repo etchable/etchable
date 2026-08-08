@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local development.
+BETTER_AUTH_SECRET=replace-with-a-long-random-string

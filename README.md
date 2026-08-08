@@ -5,6 +5,7 @@ pnpm workspace.
 ## Structure
 
 - `apps/desktop` — Tauri + React + TypeScript desktop app
+- `apps/web` — landing page + API on Cloudflare Workers (Vite, React, Tailwind, Hono, D1, Drizzle, Better Auth)
 
 ## Development
 
