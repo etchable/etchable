@@ -50,4 +50,55 @@ fn builds_demo_board() {
     // Rebuild picks up source edits? At minimum, rebuilding is idempotent.
     let again = ws.build_file(&board, &BTreeMap::new()).expect("rebuild");
     assert!(!again.has_errors());
+
+    // Circuit JSON emission: deterministic, complete id_map, sane ftypes.
+    let out = zen_build::BuildOutput {
+        source: again.source.clone(),
+        schematic: Some(sch),
+        diagnostics: vec![],
+    };
+    let doc = zen_build::to_circuit_json(&out);
+    let doc2 = zen_build::to_circuit_json(&out);
+    assert_eq!(
+        serde_json::to_string(&doc).unwrap(),
+        serde_json::to_string(&doc2).unwrap(),
+        "re-emission must be byte-identical"
+    );
+
+    let ftypes: Vec<&str> = doc
+        .elements
+        .iter()
+        .filter(|e| e["type"] == "source_component")
+        .filter_map(|e| e["ftype"].as_str())
+        .collect();
+    assert_eq!(ftypes.iter().filter(|f| **f == "simple_resistor").count(), 3);
+    assert_eq!(ftypes.iter().filter(|f| **f == "simple_led").count(), 1);
+
+    // Every id referenced anywhere resolves through id_map.
+    for el in &doc.elements {
+        for (key, value) in el.as_object().unwrap() {
+            if !key.ends_with("_id") {
+                continue;
+            }
+            let ids: Vec<&str> = match value {
+                serde_json::Value::String(s) => vec![s.as_str()],
+                serde_json::Value::Array(a) => {
+                    a.iter().filter_map(serde_json::Value::as_str).collect()
+                }
+                _ => vec![],
+            };
+            for id in ids {
+                assert!(doc.id_map.contains_key(id), "unmapped id {id} in {el}");
+            }
+        }
+    }
+
+    // id_map values speak the shared vocabulary: instance paths or net names.
+    let sch = out.schematic.as_ref().unwrap();
+    for target in doc.id_map.values() {
+        assert!(
+            sch.instances.contains_key(target) || sch.nets.contains_key(target),
+            "id_map target {target} is neither instance path nor net name"
+        );
+    }
 }

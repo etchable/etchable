@@ -7,12 +7,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentEvent,
   BackendState,
-  BuildOutput,
   BuildStartedPayload,
   BuildSummary,
+  BuildView,
   Diag,
-  SchematicDoc,
 } from "./types";
+import { BUILD_PAYLOAD_VERSION } from "./types";
 import { transcriptReducer, type ChatItem } from "./chat/messages";
 
 export type SessionInfo = { sessionId?: string; model?: string };
@@ -23,10 +23,8 @@ const NO_DIAGS: Diag[] = [];
 
 export function useEtchable() {
   const [source, setSource] = useState<string | null>(null);
-  const [build, setBuild] = useState<BuildOutput | null>(null);
-  const [lastGood, setLastGood] = useState<{ source: string; schematic: SchematicDoc } | null>(
-    null,
-  );
+  const [build, setBuild] = useState<BuildView | null>(null);
+  const [lastGood, setLastGood] = useState<BuildView | null>(null);
   const [building, setBuilding] = useState(false);
   const [boardError, setBoardError] = useState<string | null>(null);
   const [selection, setSelectionState] = useState<string[]>([]);
@@ -46,18 +44,27 @@ export function useEtchable() {
       }).catch((err) => console.error("listen failed", err));
     };
 
+    // The backend and UI must agree on the build payload shape; a silent
+    // mismatch would render garbage, so reject loudly instead.
+    const acceptBuild = (view: BuildView): boolean => {
+      if (view.version !== BUILD_PAYLOAD_VERSION) {
+        const msg = `incompatible build payload: backend v${view.version}, UI v${BUILD_PAYLOAD_VERSION} — rebuild the app`;
+        console.error(msg);
+        setBoardError(msg);
+        return false;
+      }
+      setBuild(view);
+      if (view.schematic) setLastGood(view);
+      return true;
+    };
+
     invoke<BackendState>("get_state")
       .then((s) => {
         if (disposed) return;
         setSource(s.source);
         setSelectionState(s.selection?.paths ?? []);
         setAgentRunning(s.agentRunning);
-        if (s.build) {
-          setBuild(s.build);
-          if (s.build.schematic) {
-            setLastGood({ source: s.build.source, schematic: s.build.schematic });
-          }
-        }
+        if (s.build) acceptBuild(s.build);
       })
       .catch((err) => console.error("get_state failed", err));
 
@@ -70,13 +77,10 @@ export function useEtchable() {
     );
 
     track(
-      listen<BuildOutput>("build-finished", (e) => {
+      listen<BuildView>("build-finished", (e) => {
         setBuilding(false);
         setSource(e.payload.source);
-        setBuild(e.payload);
-        if (e.payload.schematic) {
-          setLastGood({ source: e.payload.source, schematic: e.payload.schematic });
-        }
+        acceptBuild(e.payload);
       }),
     );
 
@@ -187,15 +191,15 @@ export function useEtchable() {
     return { errors, warnings, advice, components };
   }, [build, diagnostics]);
 
-  // What the canvas should draw: the current schematic, or — when the latest
+  // What the canvas should draw: the current build, or — when the latest
   // build is broken — the last good one for the same board, dimmed.
-  const display = useMemo((): { schematic: SchematicDoc | null; dimmed: boolean } => {
-    if (!build) return { schematic: null, dimmed: false };
-    if (build.schematic) return { schematic: build.schematic, dimmed: false };
+  const display = useMemo((): { view: BuildView | null; dimmed: boolean } => {
+    if (!build) return { view: null, dimmed: false };
+    if (build.schematic) return { view: build, dimmed: false };
     if (lastGood && lastGood.source === build.source) {
-      return { schematic: lastGood.schematic, dimmed: true };
+      return { view: lastGood, dimmed: true };
     }
-    return { schematic: null, dimmed: true };
+    return { view: null, dimmed: true };
   }, [build, lastGood]);
 
   return {

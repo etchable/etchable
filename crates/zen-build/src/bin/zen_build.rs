@@ -23,6 +23,11 @@ struct Args {
     #[arg(long)]
     summary: bool,
 
+    /// Print the Circuit JSON view-model ({"elements": [...], "id_map": {...}})
+    /// instead of the schematic document
+    #[arg(long)]
+    circuit_json: bool,
+
     /// Disable network access (use only cached/vendored dependencies)
     #[arg(long)]
     offline: bool,
@@ -71,6 +76,13 @@ fn main() -> ExitCode {
             serde_json::to_string_pretty(&summary)
         } else {
             serde_json::to_string(&summary)
+        }
+    } else if args.circuit_json {
+        let doc = zen_build::to_circuit_json(&output);
+        if args.pretty {
+            serde_json::to_string_pretty(&doc)
+        } else {
+            serde_json::to_string(&doc)
         }
     } else if args.pretty {
         serde_json::to_string_pretty(&output)

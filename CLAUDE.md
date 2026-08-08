@@ -38,7 +38,17 @@ Claude Code session. Cargo workspace in `crates/`, React frontend in `ui/`.
   (e.g. `root.SENSE_DIV.R1.R`); refdes (`R1`) resolve via
   `SchematicDoc::by_refdes`. This vocabulary is shared by canvas selection,
   MCP tools, and prompts — don't fork it.
-- Webview events: `build-started`, `build-finished` (full `BuildOutput`,
-  snake_case), `agent-event` (flat tagged union, camelCase — see
-  `crates/desktop/src/agent.rs::flatten`). UI mirrors live in `ui/src/types.ts`;
-  keep both sides in sync when touching either.
+- Webview events: `build-started`, `build-finished` (versioned `BuildView`:
+  `{version, source, schematic, diagnostics, circuit_json, id_map}`,
+  snake_case — bump `BUILD_PAYLOAD_VERSION` in `crates/desktop/src/state.rs`
+  AND `ui/src/types.ts` together), `agent-event` (flat tagged union,
+  camelCase — see `crates/desktop/src/agent.rs::flatten`). UI mirrors live in
+  `ui/src/types.ts`; keep both sides in sync when touching either.
+- The canvas view-model is Circuit JSON emitted by
+  `crates/zen-build/src/circuit_json.rs` — the ONLY module that knows the
+  format (byte-deterministic; every id resolves via `id_map`, never parse ids
+  apart). The only UI module importing tscircuit packages is
+  `ui/src/circuit/`. tscircuit npm deps are pinned exact and bumped as a set,
+  then re-validated:
+  `cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json | npm run --silent validate:circuit-json`.
+  See docs/decisions/0001-circuit-json-renderer.md.

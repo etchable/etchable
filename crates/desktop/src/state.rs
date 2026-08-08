@@ -37,5 +37,35 @@ pub struct UiStateSnapshot {
     pub source: Option<String>,
     pub selection: mcp::Selection,
     pub agent_running: bool,
-    pub build: Option<zen_build::BuildOutput>,
+    pub build: Option<BuildView>,
+}
+
+/// Versioned `build-finished` payload / snapshot build state. The UI rejects
+/// mismatched versions loudly — bump when the shape changes.
+pub const BUILD_PAYLOAD_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildView {
+    pub version: u32,
+    pub source: String,
+    pub schematic: Option<zen_build::SchematicDoc>,
+    pub diagnostics: Vec<zen_build::Diag>,
+    /// Circuit JSON element array (the canvas view-model).
+    pub circuit_json: Vec<serde_json::Value>,
+    /// Circuit JSON id -> instance path (or net name).
+    pub id_map: std::collections::BTreeMap<String, String>,
+}
+
+impl From<&zen_build::BuildOutput> for BuildView {
+    fn from(out: &zen_build::BuildOutput) -> Self {
+        let cj = zen_build::to_circuit_json(out);
+        Self {
+            version: BUILD_PAYLOAD_VERSION,
+            source: out.source.clone(),
+            schematic: out.schematic.clone(),
+            diagnostics: out.diagnostics.clone(),
+            circuit_json: cj.elements,
+            id_map: cj.id_map,
+        }
+    }
 }

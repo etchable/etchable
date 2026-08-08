@@ -8,25 +8,36 @@
   "scripts": {
     "web": "pnpm --filter @etchable/web dev",
     "web:build": "pnpm --filter @etchable/web build",
-    "web:deploy": "pnpm --filter @etchable/web deploy",
+    "web:deploy": "pnpm --filter @etchable/web run deploy",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "validate:circuit-json": "node ui/tools/validate-circuit-json.mjs"
   },
   "dependencies": {
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "@tscircuit/alphabet": "0.0.25",
+    "@tscircuit/circuit-json-util": "0.0.105",
+    "@tscircuit/schematic-viewer": "2.0.76",
+    "@tscircuit/soup-util": "0.0.41",
+    "circuit-json": "0.0.465",
+    "circuit-json-to-connectivity-map": "0.0.27",
+    "circuit-to-svg": "0.0.400",
+    "format-si-unit": "0.0.11",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "schematic-symbols": "0.0.238",
+    "zod": "3.25.76"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "@tauri-apps/cli": "^2"
+    "vite": "^7.0.4"
   }
 }

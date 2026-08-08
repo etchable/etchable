@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use zen_build::BuildSummary;
 
-use crate::state::{BuildRequest, SharedAppState, UiStateSnapshot};
+use crate::state::{BuildRequest, BuildView, SharedAppState, UiStateSnapshot};
 use crate::{agent, builder};
 
 type CmdResult<T> = Result<T, String>;
@@ -48,7 +48,7 @@ pub async fn get_state(state: State<'_, SharedAppState>) -> CmdResult<UiStateSna
         source: s.source.as_ref().map(|p| p.display().to_string()),
         selection: s.selection.clone(),
         agent_running,
-        build: s.build.clone(),
+        build: s.build.as_ref().map(BuildView::from),
     }))
 }
 

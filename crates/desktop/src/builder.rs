@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
 use zen_build::BuildSummary;
 
-use crate::state::{AppState, BuildRequest, SharedAppState};
+use crate::state::{AppState, BuildRequest, BuildView, SharedAppState};
 
 pub const BUILD_STARTED: &str = "build-started";
 pub const BUILD_FINISHED: &str = "build-finished";
@@ -98,8 +98,9 @@ pub fn spawn_builder(
                 Ok((ws, Ok(output))) => {
                     workspace = Some(ws);
                     let summary = BuildSummary::from_output(&output);
-                    state.canvas.set_build(output.clone());
-                    let _ = app.emit(BUILD_FINISHED, &output);
+                    let view = BuildView::from(&output);
+                    state.canvas.set_build(output);
+                    let _ = app.emit(BUILD_FINISHED, &view);
                     if let Some(reply) = reply {
                         let _ = reply.send(Ok(summary));
                     }
@@ -143,8 +144,9 @@ fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, ms
             stack: vec![],
         }],
     };
-    state.canvas.set_build(output.clone());
-    let _ = app.emit(BUILD_FINISHED, &output);
+    let view = BuildView::from(&output);
+    state.canvas.set_build(output);
+    let _ = app.emit(BUILD_FINISHED, &view);
     if let Some(reply) = reply {
         let _ = reply.send(Err(msg));
     }

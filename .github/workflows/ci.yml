@@ -1,0 +1,50 @@
+name: ci
+
+# Desktop-app checks: Rust workspace tests, frontend typecheck/build, and the
+# circuit-json emitter validated against the published tscircuit schemas.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "apps/web/**"
+      - "docs/**"
+      - "**.md"
+  pull_request:
+    paths-ignore:
+      - "apps/web/**"
+      - "docs/**"
+      - "**.md"
+
+jobs:
+  desktop:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Vendor the Zener stdlib
+        run: ./scripts/fetch-stdlib.sh
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Frontend typecheck + build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Validate circuit-json emission against published schemas
+        run: |
+          cargo run -q -p zen-build -- examples/demo/top.zen --circuit-json --offline \
+            | npm run --silent validate:circuit-json

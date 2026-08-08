@@ -16,8 +16,8 @@ agent's prompt and are queryable by the agent over MCP.
 ```
 webview (ui/)                      rust backend (crates/)
 ┌─────────────────────┐            ┌──────────────────────────────┐
-│ canvas: pan/zoom,   │◄─ events ──│ desktop  — AppState, watcher,│
-│  hit-test, overlay  │            │            commands, fanout  │
+│ canvas: tscircuit   │◄─ events ──│ desktop  — AppState, watcher,│
+│  viewer, id_map sel │            │            commands, fanout  │
 │ chat: msgs, tools,  │── invoke ─►│   │            │             │
 │  permission prompts │            │   ▼            ▼             │
 └─────────────────────┘            │ zen-build   agent-host/proto │
@@ -39,14 +39,14 @@ Three loops:
    inline permission prompts.
 3. **Context** — the agent calls MCP tools served by the app itself (wired in
    via a generated `--mcp-config`, zero setup): `build`, `get_diagnostics`,
-   `get_schematic(scope, depth)`, `get_instance`, `query_nets`,
-   `get_selection`.
+   `get_schematic(scope, depth)`, `get_circuit_json(scope)`, `get_instance`,
+   `query_nets`, `get_selection`.
 
 ### Crates
 
 | crate | role |
 |---|---|
-| `zen-build` | The eval pipeline from `pcbc` re-hosted as a library: resolve → eval → electrical checks → schematic → ERC. The **only** crate touching `pcb-*` internals (git-pinned to `v0.4.25`, no semver promise upstream); exports plain serde types only. Ships an M0 CLI: `cargo run -p zen-build -- board.zen --pretty`. |
+| `zen-build` | The eval pipeline from `pcbc` re-hosted as a library: resolve → eval → electrical checks → schematic → ERC. The **only** crate touching `pcb-*` internals (git-pinned to `v0.4.25`, no semver promise upstream); exports plain serde types only. Also emits the Circuit JSON view-model (`circuit_json.rs`: deterministic ids + `id_map` back to instance paths, layout pass included). Ships an M0 CLI: `cargo run -p zen-build -- board.zen --pretty` (or `--circuit-json`). |
 | `agent-proto` | stream-json protocol types + NDJSON codec. Drift-tolerant: unknown events/blocks are preserved as `Unknown`, never dropped. |
 | `agent-host` | `claude` subprocess lifecycle: spawn/resume/kill, event broadcast, stdin queue, permission responses, interrupts. |
 | `mcp` | Localhost MCP server (streamable HTTP, hand-rolled JSON-RPC on axum). Response-size discipline throughout: scoped, capped, summarized — a context-flooded agent is worse than no tool. |
@@ -90,12 +90,16 @@ cargo run -p zen-build -- examples/demo/top.zen --summary   # {ok, components, n
 
 - **M0 pipeline spike** — done. Git-dep linking works; decision gate answered:
   positions do *not* come free from `pcb-sch` (only authored `# pcb:sch`
-  comments), so the canvas owns layout (deterministic TS, ELK later if needed).
+  comments), so `zen-build` owns layout (deterministic Rust pass; authored
+  positions win when a board is fully annotated).
 - **M1 live diagnostics** — done (watch loop, Problems panel).
-- **M2 canvas v0** — done: boxes-and-nets, pan/zoom, hit-test, marquee,
-  diagnostic badges, net highlighting.
+- **M2 canvas** — done, rebuilt on tscircuit (PATCH-001): `zen-build` emits
+  Circuit JSON + `id_map`, `@tscircuit/schematic-viewer` renders real symbol
+  glyphs, net-label flags, module boxes; selection + diagnostic highlighting
+  ride per-id CSS. Dropped vs the old canvas: marquee multi-select and
+  module-container click targets (see docs/decisions/0001).
 - **M3 embedded agent** — done: chat panel, tool activity, inline permissions,
-  MCP server with all six tools.
+  MCP server with all seven tools.
 - **M4 selection as context** — done: selection → `set_selection` →
   `get_selection` MCP tool + structured `<canvas-selection>` block in prompts.
 - **M5 polish** — not started (real symbol shapes, module collapse,
@@ -108,9 +112,11 @@ cargo run -p zen-build -- examples/demo/top.zen --summary   # {ok, components, n
   deliberately.
 - Bundled-app distribution needs `lib/std` shipped next to the binary and
   Anthropic auth arrangements for non-personal use; dev-mode use is fine.
-- Nets render as orthogonal trunk routing, not real schematic routing;
-  symbol s-expressions from KiCad are available in the build output for a
-  future real-symbol renderer.
+- Nets render as net-label flags at each pin (standard schematic idiom), not
+  routed wires; `schematic_trace` routing is a possible follow-up.
+- The tscircuit npm stack churns fast and has undeclared inter-package deps;
+  versions are pinned exact and must move as a set
+  (docs/decisions/0001-circuit-json-renderer.md).
 
 ## License notes
 

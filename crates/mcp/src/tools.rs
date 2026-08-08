@@ -73,6 +73,17 @@ pub fn tool_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "get_circuit_json",
+            description: "Circuit JSON view-model of the current board (what the canvas renders), scoped to an instance path. Returns {elements, id_map}; id_map maps every element id back to an instance path or net name.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Instance path (e.g. root.SENSE_DIV) or refdes (e.g. R1) to scope to. Defaults to root (the whole board)."}
+                },
+                "additionalProperties": false
+            }),
+        },
+        ToolDef {
             name: "get_selection",
             description: "What the user currently has selected on the canvas (instance paths / net names, plus an optional note). Call this when the user says 'this', 'these', or refers to their selection.",
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
@@ -106,6 +117,7 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             ok(json!({"summary": summary, "diagnostics": diags}))
         }),
         "get_schematic" => with_build(state, |build| get_schematic(build, args)),
+        "get_circuit_json" => with_build(state, |build| get_circuit_json(build, args)),
         "get_instance" => with_build(state, |build| get_instance(build, args)),
         "query_nets" => with_build(state, |build| query_nets(build, args)),
         "get_selection" => {
@@ -285,6 +297,82 @@ fn get_schematic(build: &BuildOutput, args: &Value) -> (String, bool) {
         result["nets"] = json!(nets);
     }
 
+    ok(result)
+}
+
+const MAX_CJ_ELEMENTS: usize = 500;
+
+fn get_circuit_json(build: &BuildOutput, args: &Value) -> (String, bool) {
+    let Some(sch) = &build.schematic else {
+        return err("build produced no schematic (fix errors first)".into());
+    };
+    let scope_arg = args.get("scope").and_then(Value::as_str).unwrap_or("root");
+    let Some(scope) = sch.resolve_path(scope_arg) else {
+        return err(format!(
+            "no such instance: {scope_arg} (use paths like root.MODULE or a refdes like R1)"
+        ));
+    };
+
+    let doc = zen_build::to_circuit_json(build);
+    let prefix = format!("{scope}.");
+    let in_scope = |target: &str| {
+        scope == "root" || target == scope || target.starts_with(&prefix)
+    };
+
+    // An element is in scope when every id it references maps to an
+    // in-scope instance path — or, for net elements, when the net touches
+    // the scope. Un-id'd elements (module boxes) only survive a root scope.
+    let net_in_scope = |net_name: &str| {
+        sch.nets.get(net_name).is_some_and(|net| {
+            net.ports.iter().any(|p| in_scope(&p.component))
+        })
+    };
+
+    let mut elements = Vec::new();
+    let mut total = 0usize;
+    for el in &doc.elements {
+        let ids: Vec<&str> = el
+            .as_object()
+            .into_iter()
+            .flat_map(|obj| obj.iter())
+            .filter(|(k, _)| k.ends_with("_id"))
+            .filter_map(|(_, v)| v.as_str())
+            .collect();
+        let keep = if ids.is_empty() {
+            scope == "root"
+        } else {
+            ids.iter().all(|id| {
+                doc.id_map.get(*id).is_some_and(|target| {
+                    in_scope(target) || net_in_scope(target)
+                })
+            })
+        };
+        if !keep {
+            continue;
+        }
+        total += 1;
+        if elements.len() < MAX_CJ_ELEMENTS {
+            elements.push(el.clone());
+        }
+    }
+
+    let id_map: std::collections::BTreeMap<&String, &String> = doc
+        .id_map
+        .iter()
+        .filter(|(_, target)| in_scope(target) || net_in_scope(target))
+        .collect();
+
+    let mut result = json!({
+        "scope": scope,
+        "elements": elements,
+        "id_map": id_map,
+    });
+    if total > MAX_CJ_ELEMENTS {
+        result["truncated"] = json!(format!(
+            "...and {} more elements — re-query with a narrower scope",
+            total - MAX_CJ_ELEMENTS
+        ));
+    }
     ok(result)
 }
 

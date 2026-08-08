@@ -7,8 +7,8 @@ use std::path::Path;
 use pcb_sch::{AttributeValue, InstanceRef, Schematic};
 
 use crate::model::{
-    Diag, InstanceDoc, InstanceKind, NetDoc, PinDoc, PortRef, PositionDoc, SchematicDoc, Severity,
-    ROOT_PATH,
+    child_path, Diag, InstanceDoc, InstanceKind, NetDoc, PinDoc, PortRef, PositionDoc,
+    SchematicDoc, Severity, ROOT_PATH,
 };
 
 fn dotted(instance_ref: &InstanceRef) -> String {
@@ -122,14 +122,6 @@ pub(crate) fn convert_schematic(sch: &mut Schematic, ws_root: &Path) -> Schemati
             pins.sort_by(|a, b| a.name.cmp(&b.name));
         }
 
-        let position = instance.symbol_positions.iter().next().map(|(_, p)| {
-            PositionDoc {
-                x: p.x,
-                y: p.y,
-                rotation: p.rotation,
-            }
-        });
-
         // `__`-prefixed attributes are evaluator internals (signatures, etc.)
         // and can be enormous; they never belong in agent/UI-facing output.
         let attributes = instance
@@ -164,9 +156,40 @@ pub(crate) fn convert_schematic(sch: &mut Schematic, ws_root: &Path) -> Schemati
                 attributes,
                 children,
                 pins,
-                position,
+                position: None,
             },
         );
+    }
+
+    // Authored `# pcb:sch` positions live on the *module* instance whose
+    // source file declares them, keyed `comp:<relative.instance.path>` (with
+    // an optional `@unit` suffix). Distribute them onto the component
+    // instances they name. Keys are sorted so the outcome is deterministic
+    // (symbol_positions is a HashMap upstream); the first writer wins.
+    for (instance_ref, instance) in &sch.instances {
+        if instance.symbol_positions.is_empty() {
+            continue;
+        }
+        let module_path = dotted(instance_ref);
+        let mut keys: Vec<&String> = instance.symbol_positions.keys().collect();
+        keys.sort();
+        for key in keys {
+            let Some(rel) = key.strip_prefix("comp:") else {
+                continue; // net/power symbol positions — not modelled yet
+            };
+            let rel = rel.split('@').next().unwrap_or(rel);
+            let target = child_path(&module_path, rel);
+            let pos = &instance.symbol_positions[key];
+            if let Some(doc) = instances.get_mut(&target) {
+                if doc.position.is_none() {
+                    doc.position = Some(PositionDoc {
+                        x: pos.x,
+                        y: pos.y,
+                        rotation: pos.rotation,
+                    });
+                }
+            }
+        }
     }
 
     let root_module = sch

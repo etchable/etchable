@@ -5,6 +5,7 @@
 //! boundary ([`model`]). Pin the pcb-* git tag deliberately; these are
 //! internal APIs with no stability promise.
 
+mod circuit_json;
 mod convert;
 mod model;
 mod pipeline;
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
 pub use model::*;
 
 /// An opened .zen workspace with resolved dependencies.

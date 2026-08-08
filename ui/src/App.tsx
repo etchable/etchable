@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import Canvas from "./canvas/Canvas";
+import CircuitCanvas from "./circuit/CircuitCanvas";
 import Chat from "./chat/Chat";
 import Problems from "./problems/Problems";
 import { useEtchable } from "./state";
@@ -38,7 +38,7 @@ export default function App() {
   };
 
   const handleSelectDiag = (diag: Diag) => {
-    const sch = app.display.schematic;
+    const sch = app.display.view?.schematic;
     if (!sch || !diag.file) return;
     const hits: string[] = [];
     for (const inst of Object.values(sch.instances)) {
@@ -110,8 +110,8 @@ export default function App() {
 
       {hasBoard ? (
         <div className="main">
-          <Canvas
-            schematic={app.display.schematic}
+          <CircuitCanvas
+            view={app.display.view}
             source={source}
             dimmed={app.display.dimmed}
             diagnostics={app.diagnostics}

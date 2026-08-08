@@ -2,10 +2,22 @@
 
 // ---- Build data (snake_case, from "build-finished" event / get_state) ----
 
-export type BuildOutput = {
+/// Bump in lockstep with crates/desktop/src/state.rs::BUILD_PAYLOAD_VERSION.
+export const BUILD_PAYLOAD_VERSION = 2;
+
+/// A Circuit JSON element (tscircuit's intermediary format). Kept opaque —
+/// the UI only reads `type` and id fields; everything else belongs to the
+/// viewer.
+export type CircuitJsonElement = { type: string } & Record<string, unknown>;
+
+export type BuildView = {
+  version: number;
   source: string;
   schematic: SchematicDoc | null;
   diagnostics: Diag[];
+  circuit_json: CircuitJsonElement[];
+  /** Circuit JSON id -> instance path (or net name). Never parse ids apart. */
+  id_map: Record<string, string>;
 };
 
 export type SchematicDoc = {
@@ -66,7 +78,7 @@ export type BackendState = {
   source: string | null;
   selection: { paths: string[]; note?: string };
   agentRunning: boolean;
-  build: BuildOutput | null;
+  build: BuildView | null;
 };
 
 // ---- Agent events (camelCase, flat tagged union) ----

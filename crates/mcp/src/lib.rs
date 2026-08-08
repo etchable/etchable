@@ -128,7 +128,8 @@ mod tests {
         assert!(names.contains(&"build"));
         assert!(names.contains(&"get_schematic"));
         assert!(names.contains(&"get_selection"));
-        assert_eq!(names.len(), 6);
+        assert!(names.contains(&"get_circuit_json"));
+        assert_eq!(names.len(), 7);
     }
 
     #[tokio::test]
