@@ -2,6 +2,7 @@
   "name": "etchable",
   "private": true,
   "license": "MIT",
+  "packageManager": "pnpm@10.28.0",
   "scripts": {
     "dev": "pnpm --filter @etchable/desktop dev",
     "build": "pnpm --filter @etchable/desktop build",
