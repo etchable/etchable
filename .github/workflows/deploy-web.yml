@@ -41,6 +41,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Build & deploy
-        run: pnpm --filter @etchable/web deploy
+        run: pnpm --filter @etchable/web run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

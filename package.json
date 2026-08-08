@@ -9,6 +9,6 @@
     "tauri": "pnpm --filter @etchable/desktop tauri",
     "web": "pnpm --filter @etchable/web dev",
     "web:build": "pnpm --filter @etchable/web build",
-    "web:deploy": "pnpm --filter @etchable/web deploy"
+    "web:deploy": "pnpm --filter @etchable/web run deploy"
   }
 }
