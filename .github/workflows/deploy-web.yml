@@ -40,6 +40,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      # worker-configuration.d.ts is gitignored; generate it so tsc can see
+      # Env. The example vars file stands in for .dev.vars so secret names
+      # get typed without real values.
+      - name: Generate wrangler types
+        run: |
+          cp .dev.vars.example .dev.vars
+          pnpm run cf-typegen
+        working-directory: apps/web
+
       - name: Build & deploy
         run: pnpm --filter @etchable/web run deploy
         env:
