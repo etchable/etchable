@@ -189,10 +189,14 @@ pub struct BuildView {
     pub source_hash: Option<String>,
 }
 
-impl From<&zen_build::BuildOutput> for BuildView {
-    fn from(out: &zen_build::BuildOutput) -> Self {
+impl BuildView {
+    /// `source_abs` must be the ABSOLUTE board path (canvas state), not
+    /// `out.source` (workspace-relative): hashing the relative path only
+    /// resolves when the process cwd happens to be the workspace root,
+    /// and a `None` hash silently disables drag-to-move persistence.
+    pub fn new(out: &zen_build::BuildOutput, source_abs: Option<&std::path::Path>) -> Self {
         let cj = zen_build::to_circuit_json(out);
-        let source_hash = zen_build::content_hash(std::path::Path::new(&out.source)).ok();
+        let source_hash = source_abs.and_then(|p| zen_build::content_hash(p).ok());
         Self {
             version: BUILD_PAYLOAD_VERSION,
             source: out.source.clone(),
@@ -202,5 +206,37 @@ impl From<&zen_build::BuildOutput> for BuildView {
             id_map: cj.id_map,
             source_hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod build_view_tests {
+    use super::*;
+
+    #[test]
+    fn source_hash_comes_from_the_absolute_path() {
+        let dir = std::env::temp_dir().join(format!("etch-bv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let board = dir.join("board.zen");
+        std::fs::write(&board, "# board\n").unwrap();
+
+        let out = zen_build::BuildOutput {
+            // Workspace-relative, resolvable only from the workspace root —
+            // hashing this instead of the absolute path silently disables
+            // drag-to-move persistence.
+            source: "board.zen".into(),
+            schematic: None,
+            diagnostics: vec![],
+        };
+        let view = BuildView::new(&out, Some(&board));
+        assert_eq!(
+            view.source_hash.as_deref(),
+            zen_build::content_hash(&board).ok().as_deref()
+        );
+        assert!(view.source_hash.is_some());
+
+        let none = BuildView::new(&out, None);
+        assert_eq!(none.source_hash, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

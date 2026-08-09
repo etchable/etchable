@@ -314,7 +314,10 @@ pub async fn get_state(
         source: s.source.as_ref().map(|p| p.display().to_string()),
         selection: s.selection.clone(),
         agent_running,
-        build: s.build.as_ref().map(BuildView::from),
+        build: s
+            .build
+            .as_ref()
+            .map(|b| BuildView::new(b, s.source.as_deref())),
         project: s.project.as_ref().map(crate::state::ProjectView::from),
         pending_permissions: pending_permissions.clone(),
     }))

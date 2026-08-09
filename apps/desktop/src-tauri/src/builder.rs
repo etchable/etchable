@@ -133,7 +133,7 @@ pub fn spawn_builder(
                 Ok((ws, Ok(output))) => {
                     workspace = Some(ws);
                     let summary = BuildSummary::from_output(&output);
-                    let view = BuildView::from(&output);
+                    let view = BuildView::new(&output, Some(&want_source));
                     state.canvas.set_build(output);
                     emit(&app, &state, BUILD_FINISHED, &view);
                     if let Some(reply) = reply {
@@ -247,7 +247,8 @@ fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, ms
             stack: vec![],
         }],
     };
-    let view = BuildView::from(&output);
+    let source_abs = state.canvas.read(|s| s.source.clone());
+    let view = BuildView::new(&output, source_abs.as_deref());
     state.canvas.set_build(output);
     emit(app, state, BUILD_FINISHED, &view);
     if let Some(reply) = reply {
