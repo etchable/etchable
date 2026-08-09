@@ -10,6 +10,7 @@ mod circuit_json;
 mod convert;
 mod frozen;
 mod layout;
+mod layout_check;
 mod model;
 mod pipeline;
 mod positions;
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
+pub use layout_check::{check_layout, LayoutProblem, LayoutReport};
 pub use model::*;
 pub use catalog::{
     list_library, resolve_library_path, symbol_pins, FootprintLibraryInfo, GenericInfo,

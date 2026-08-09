@@ -45,7 +45,7 @@ pub fn to_circuit_json(out: &BuildOutput) -> CircuitJsonDoc {
 // Geometry constants (tscircuit schematic units; ~1 unit per passive symbol)
 // ---------------------------------------------------------------------------
 
-const NET_LABEL_OFFSET: f64 = 0.1;
+pub(crate) const NET_LABEL_OFFSET: f64 = 0.1;
 
 /// How component pins map onto a symbol's ports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -101,8 +101,20 @@ the trajectory).
   failures). `zen_build::project` is the only implementation; watcher
   routes `*.toml`/datasheet changes to a project-only refresh
   (`project-changed` event, no build flash).
-- Agent scaffolding harness (docs/decisions/0003, amended by 0004): the MCP
-  surface is 16 tools; sourcing never needs Bash. Real parts come from LCSC
+- Agent scaffolding harness (docs/decisions/0003, amended by 0004 and
+  0006): the MCP surface is 18 tools; sourcing never needs Bash.
+  `get_board_state` is the entry point — it fuses live orientation (build
+  status, selection, top-level modules) with the working-rules manual
+  (`crates/mcp/assets/board-manual.md`, compiled in as `mcp::BOARD_MANUAL`).
+  That manual is the SINGLE source of truth for agent working rules: the
+  system-prompt suffix in `agent.rs` is preamble + `mcp::BOARD_MANUAL` —
+  edit the .md, never fork prose into agent.rs, and keep its tool
+  references in sync with tools.rs. `check_layout`
+  (`zen_build::check_layout`) is the cheap verify tier: pure-geometry lint
+  (symbol overlaps, wires through bodies, net-label collisions) over the
+  same layout/route data the canvas renders — no screenshots. Every tool
+  def carries MCP annotations (readOnly/destructive/idempotent/openWorld);
+  new tools must too (a test enforces it). Real parts come from LCSC
   via `search_parts` (live JLCPCB tier: stock/price/Basic-vs-Extended) →
   `get_lcsc_part` (pre-commit check incl. EDA-quality probe) →
   `add_lcsc_component` (fetch → convert → `install_component`); `crates/lcsc`

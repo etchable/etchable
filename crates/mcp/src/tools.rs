@@ -16,14 +16,63 @@ pub struct ToolDef {
     pub name: &'static str,
     pub description: &'static str,
     pub input_schema: Value,
+    /// MCP tool annotations (title + read-only/destructive/idempotent/
+    /// open-world hints) so clients can tell inspection from mutation.
+    pub annotations: Value,
+}
+
+/// Local, read-only inspection: safe to call freely.
+fn read_only(title: &str) -> Value {
+    json!({
+        "title": title,
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+    })
+}
+
+/// Read-only but talks to the network (LCSC/JLCPCB).
+fn read_only_network(title: &str) -> Value {
+    json!({
+        "title": title,
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+    })
+}
+
+/// Writes into the project (never destroys without an explicit overwrite).
+fn writes_project(title: &str, network: bool) -> Value {
+    json!({
+        "title": title,
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": network,
+    })
 }
 
 pub fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
-            name: "build",
-            description: "Force a rebuild of the current board and return a build summary with error/warning counts.",
+            name: "get_board_state",
+            description: "Orientation: the open board, project, build status with error counts, current canvas selection, top-level modules, and the working-rules manual for this environment. Call this FIRST when starting work (or after resuming) before reaching for other tools.",
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            annotations: read_only("Get board state"),
+        },
+        ToolDef {
+            name: "build",
+            description: "Force a rebuild of the current board and return a build summary with error/warning counts. After a clean build, check_layout verifies the drawing itself.",
+            input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            annotations: json!({
+                "title": "Rebuild the board",
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false,
+            }),
         },
         ToolDef {
             name: "get_diagnostics",
@@ -35,6 +84,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("Get diagnostics"),
         },
         ToolDef {
             name: "get_schematic",
@@ -48,6 +98,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("Get schematic tree"),
         },
         ToolDef {
             name: "get_instance",
@@ -60,6 +111,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["path"],
                 "additionalProperties": false
             }),
+            annotations: read_only("Get instance detail"),
         },
         ToolDef {
             name: "query_nets",
@@ -72,6 +124,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("Query nets"),
         },
         ToolDef {
             name: "get_circuit_json",
@@ -83,6 +136,19 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("Get circuit JSON"),
+        },
+        ToolDef {
+            name: "check_layout",
+            description: "Structural lint of the rendered schematic — the cheap verification tier (pure geometry, no screenshot): overlapping symbols, wires passing through symbol bodies, colliding net labels. Run it after finishing a module or section, scoped to what you just touched, and fix problems before moving on.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "Instance path (e.g. root.SENSE_DIV) or refdes (e.g. R1) to scope to. Defaults to the whole board."}
+                },
+                "additionalProperties": false
+            }),
+            annotations: read_only("Check layout"),
         },
         ToolDef {
             name: "list_library",
@@ -95,6 +161,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("List local library"),
         },
         ToolDef {
             name: "get_symbol_pins",
@@ -108,6 +175,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["library"],
                 "additionalProperties": false
             }),
+            annotations: read_only("Get symbol pins"),
         },
         ToolDef {
             name: "add_component",
@@ -129,6 +197,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["name", "symbol_library"],
                 "additionalProperties": false
             }),
+            annotations: writes_project("Add component from file", false),
         },
         ToolDef {
             name: "search_parts",
@@ -141,6 +210,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["query"],
                 "additionalProperties": false
             }),
+            annotations: read_only_network("Search parts"),
         },
         ToolDef {
             name: "get_lcsc_part",
@@ -153,6 +223,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["lcsc"],
                 "additionalProperties": false
             }),
+            annotations: read_only_network("Check LCSC part"),
         },
         ToolDef {
             name: "add_lcsc_component",
@@ -169,6 +240,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["name", "lcsc"],
                 "additionalProperties": false
             }),
+            annotations: writes_project("Add LCSC component", true),
         },
         ToolDef {
             name: "fetch_datasheet",
@@ -182,11 +254,19 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["url", "component"],
                 "additionalProperties": false
             }),
+            annotations: json!({
+                "title": "Fetch datasheet",
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": true,
+            }),
         },
         ToolDef {
             name: "zener_reference",
             description: "The authoritative Zener language guide (Component/Module/io/net semantics, part identity, validation rules). Call this for deep syntax questions instead of guessing or searching the web.",
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            annotations: read_only("Zener language guide"),
         },
         ToolDef {
             name: "get_parts",
@@ -198,18 +278,33 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 },
                 "additionalProperties": false
             }),
+            annotations: read_only("Get BOM"),
         },
         ToolDef {
             name: "get_selection",
             description: "What the user currently has selected on the canvas (instance paths / net names, plus an optional note). Call this when the user says 'this', 'these', or refers to their selection.",
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            annotations: read_only("Get canvas selection"),
         },
     ]
+}
+
+/// Imperative next-step line for a summary with errors, so the fix loop is
+/// stated, not inferred (the canvas keeps the last good build until fixed).
+fn fix_loop_hint(summary: &BuildSummary) -> Option<String> {
+    (summary.errors > 0).then(|| {
+        format!(
+            "{} error(s) — the canvas keeps showing the last good build until they are fixed. \
+             Fix the source and build again.",
+            summary.errors
+        )
+    })
 }
 
 /// Dispatch a tools/call. Returns (content_text, is_error).
 pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String, bool) {
     match name {
+        "get_board_state" => get_board_state(state),
         "build" => match state.request_rebuild().await {
             Ok(summary) => {
                 let diags = state.read(|s| {
@@ -218,7 +313,8 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
                         .map(|b| diagnostics_json(b, None, 20))
                         .unwrap_or_default()
                 });
-                ok(json!({"summary": summary, "diagnostics": diags}))
+                let hint = fix_loop_hint(&summary);
+                ok(json!({"summary": summary, "diagnostics": diags, "hint": hint}))
             }
             Err(e) => err(format!("build failed: {e}")),
         },
@@ -230,8 +326,10 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             });
             let diags = diagnostics_json(build, severity, MAX_DIAGNOSTICS);
             let summary = BuildSummary::from_output(build);
-            ok(json!({"summary": summary, "diagnostics": diags}))
+            let hint = fix_loop_hint(&summary);
+            ok(json!({"summary": summary, "diagnostics": diags, "hint": hint}))
         }),
+        "check_layout" => with_build(state, |build| check_layout(build, args)),
         "get_schematic" => with_build(state, |build| get_schematic(build, args)),
         "get_circuit_json" => with_build(state, |build| get_circuit_json(build, args)),
         "get_instance" => state.read(|s| match &s.build {
@@ -411,6 +509,98 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
         }
         other => err(format!("unknown tool: {other}")),
     }
+}
+
+/// Orientation + working rules in one call, so a session's first tool use
+/// yields both the live state and the manual (which the embedded agent also
+/// carries in its system prompt — external MCP clients get it only here).
+fn get_board_state(state: &SharedState) -> (String, bool) {
+    state.read(|s| {
+        let build = s.build.as_ref().map(BuildSummary::from_output);
+        let hint = build.as_ref().and_then(fix_loop_hint);
+        let top_level = s
+            .build
+            .as_ref()
+            .and_then(|b| b.schematic.as_ref())
+            .map(|sch| {
+                sch.instance("root")
+                    .map(|root| {
+                        root.children
+                            .values()
+                            .filter_map(|path| sch.instance(path))
+                            .map(|inst| {
+                                json!({
+                                    "path": inst.path,
+                                    "kind": inst.kind,
+                                    "type": inst.type_name,
+                                    "refdes": inst.refdes,
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            });
+        ok(json!({
+            "board": s.source,
+            "workspace_root": s.workspace_root,
+            "project": s.project.as_ref().map(|p| json!({
+                "name": p.name,
+                "root": p.root,
+                "board": p.board,
+                "problems": p.problems,
+            })),
+            "build": build,
+            "hint": hint,
+            "selection": s.selection,
+            "top_level": top_level,
+            "manual": crate::BOARD_MANUAL,
+        }))
+    })
+}
+
+const MAX_LAYOUT_PROBLEMS: usize = 100;
+
+fn check_layout(build: &BuildOutput, args: &Value) -> (String, bool) {
+    let Some(sch) = &build.schematic else {
+        return err("build produced no schematic (fix errors first)".into());
+    };
+    let scope = match args.get("scope").and_then(Value::as_str) {
+        Some(raw) => match sch.resolve_path(raw) {
+            Some(p) => Some(p.to_string()),
+            None => {
+                return err(format!(
+                    "no such instance: {raw} (use paths like root.MODULE or a refdes like R1)"
+                ))
+            }
+        },
+        None => None,
+    };
+    let report = zen_build::check_layout(sch, scope.as_deref());
+    let total = report.problems.len();
+    let problems: Vec<_> = report.problems.iter().take(MAX_LAYOUT_PROBLEMS).collect();
+    let mut result = json!({
+        "scope": scope.unwrap_or_else(|| "root".into()),
+        "checked": {
+            "components": report.components,
+            "wires": report.wires,
+            "net_labels": report.labels,
+        },
+        "problems": problems,
+        "status": if total == 0 { "clean" } else { "problems_found" },
+    });
+    if total > MAX_LAYOUT_PROBLEMS {
+        result["truncated"] = json!(format!(
+            "...and {} more — fix these and re-run, or narrow the scope",
+            total - MAX_LAYOUT_PROBLEMS
+        ));
+    }
+    if total > 0 {
+        result["hint"] = json!(
+            "These are drawing defects the user can see on the canvas. Fix them by adjusting \
+             `# pcb:sch` positions or restructuring, then re-run check_layout."
+        );
+    }
+    ok(result)
 }
 
 fn with_build(

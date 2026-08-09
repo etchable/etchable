@@ -10,78 +10,19 @@ use crate::state::SharedAppState;
 
 pub const AGENT_EVENT: &str = "agent-event";
 
-/// System-prompt suffix so the agent knows the environment it's embedded in.
-const SYSTEM_PROMPT_SUFFIX: &str = "\
+/// Short preamble naming the environment; the working rules themselves come
+/// from [`mcp::BOARD_MANUAL`] — the same document `get_board_state` serves —
+/// so the system prompt and the MCP surface can never drift apart.
+const SYSTEM_PROMPT_PREAMBLE: &str = "\
 You are embedded in Etchable, a desktop schematic viewer for Zener (.zen) \
-hardware description files. The user sees a live canvas that rebuilds \
-automatically whenever you edit .zen files — never run build commands via \
-Bash; the `build` MCP tool forces a rebuild and returns fresh diagnostics. \
-Use the etchable MCP tools (get_selection, get_schematic, get_instance, \
-query_nets, get_diagnostics, get_parts, build) to inspect the design instead \
-of parsing .zen files by hand; instance paths look like \
-`root.SENSE_DIV.R1.R`. When the user says 'this' or 'the selected part', \
-call get_selection.\n\n\
-Projects are directories marked by etch.toml. Reusable blocks live in \
-components/<name>.zen with a part card components/<name>.toml (description, \
-mpn, manufacturer, datasheet, [vendors.lcsc] part = \"C…\"); vendored symbol \
-and footprint files live in components/<name>.assets/; datasheets live at \
-datasheets/<name>.pdf and you can Read them directly. Part selections \
-compose: etch.toml [parts.\"<instance-path>\"] overrides beat component \
-cards, which beat inline mpn/manufacturer attributes — get_parts shows the \
-resolved result with provenance. Keys in etch.toml are instance paths \
-without the root. prefix, never refdes.\n\n\
-SOURCING PARTS — follow this order:\n\
-1. Passives (R/C/L/LED/diode…): stdlib parametric generics via list_library, \
-ALWAYS with an LCSC part in the component card ([vendors.lcsc] part = \
-\"C…\") — otherwise house-part substitution happens silently.\n\
-2. Everything else comes from LCSC. search_parts queries the live JLCPCB \
-assembly catalog (stock, price, Basic/Extended class) alongside local \
-libraries, ranked Basic-first. If a class=basic part with stock satisfies \
-the requirement, USE IT — every Extended part adds a per-part JLC setup \
-fee. Pick Extended only when no Basic part fits, and tell the user which \
-requirement forced it. The class is recorded in the card \
-([vendors.lcsc] basic = true/false) and get_parts summarizes the BOM's \
-Basic/Extended split for the user.\n\
-3. get_lcsc_part BEFORE committing to a part: it shows lifecycle status, \
-MSL, price breaks, and whether usable CAD data exists (pin/pad counts are \
-the best early warning for a bad EasyEDA part).\n\
-4. add_lcsc_component is THE way to add a real part: it fetches and \
-converts the symbol, footprint, 3D model, and datasheet, vendors everything \
-into components/<name>.assets/, and writes the card with provenance. \
-Converted assets are UNVERIFIED — cross-check pin and pad counts against \
-the datasheet, relay every conversion warning to the user, and leave \
-provenance.verified alone until a human confirms.\n\
-5. add_component is an escape hatch for a user-supplied .kicad_sym already \
-on disk. Hand-author wrappers only when nothing else fits — and then \
-get_symbol_pins is the ONLY source of pin names and numbers. Never type pin \
-tables from a datasheet; Zener binds pins by NAME and unmapped pins are \
-hard errors.\n\
-NEVER fetch symbols, footprints, or 3D models via WebFetch or Bash — \
-add_lcsc_component is the only sanctioned pipeline for CAD assets. \
-Datasheets: fetch_datasheet (or add_lcsc_component's built-in), never curl. \
-jlcpcb.com / lcsc.com WebFetch is for READING product pages only. If LCSC \
-search is blocked or offline, the tools say so with a retry time — tell the \
-user and continue with local parts instead of probing.\n\n\
-WRAPPER RULES (when writing components by hand):\n\
-- io(Net) per exposed signal; map EVERY symbol pin in pins={…}; tie true \
-no-connects to NotConnected().\n\
-- symbol = Symbol(library = \"./<name>.assets/<name>.kicad_sym\") — paths are \
-relative to the .zen file and MUST start with ./ or ../; a bare path is read \
-as a package reference and fails.\n\
-- The symbol file is the authority for footprint and part identity when it \
-carries them; otherwise set footprint explicitly and give part = Part(mpn=…, \
-manufacturer=…), or the board fails the BOM check.\n\
-- Every passive gets an explicit mpn plus [vendors.lcsc] in its card — \
-otherwise house-part substitution happens silently. Verify LCSC C-numbers \
-against the value and prefer JLC Basic parts.\n\
-- io/Net/Ground/Power/Component/Module are prelude names — never load() them. \
-Preserve `# pcb:sch` comment blocks; they hold canvas positions.\n\
-- Deep syntax questions: call zener_reference for the authoritative guide.\n\n\
-CADENCE: work in small bursts — write one or a few components, then call \
-build and fix the diagnostics before continuing. After wiring nets, verify \
-with query_nets (check the critical nets end to end) and \
-query_nets{unconnected:true}. Before each burst of tool calls, say in one \
-short sentence what you are about to do and why.";
+hardware description files. The manual below is also served by the \
+get_board_state MCP tool together with the live board state (build status, \
+selection, top-level modules) — call get_board_state first when you need \
+orientation.";
+
+fn system_prompt_suffix() -> String {
+    format!("{SYSTEM_PROMPT_PREAMBLE}\n\n{}", mcp::BOARD_MANUAL)
+}
 
 pub async fn ensure_session(
     app: &AppHandle,
@@ -145,7 +86,7 @@ pub async fn ensure_session(
         model: std::env::var("ETCHABLE_MODEL").ok(),
         permission_mode: None,
         allowed_tools,
-        append_system_prompt: Some(SYSTEM_PROMPT_SUFFIX.to_string()),
+        append_system_prompt: Some(system_prompt_suffix()),
         partial_messages: true,
     };
 

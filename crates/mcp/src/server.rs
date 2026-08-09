@@ -1,6 +1,6 @@
 //! Minimal MCP server over streamable HTTP (single JSON responses, no SSE).
 //!
-//! Hand-rolled on axum instead of pulling `rmcp`: the surface is six tools
+//! Hand-rolled on axum instead of pulling `rmcp`: the tool surface is small
 //! and the JSON-RPC subset involved is tiny, while MCP SDK APIs churn fast.
 //! The agent connects via `--mcp-config` pointing at `http://127.0.0.1:PORT/mcp`.
 
@@ -88,6 +88,7 @@ async fn handle_post(
                 "name": t.name,
                 "description": t.description,
                 "inputSchema": t.input_schema,
+                "annotations": t.annotations,
             })).collect::<Vec<_>>(),
         })),
         "tools/call" => {

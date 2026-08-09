@@ -14,6 +14,12 @@ pub mod tools;
 /// compiled in so `zener_reference` works in packaged builds too.
 pub const ZENER_REFERENCE: &str = include_str!("../assets/zener-language-skill.md");
 
+/// The working-rules manual for agents operating on a board. Single source
+/// of truth: the desktop app appends it to the embedded agent's system
+/// prompt AND `get_board_state` serves it to any MCP client, so external
+/// clients get the same rules and the two can never drift.
+pub const BOARD_MANUAL: &str = include_str!("../assets/board-manual.md");
+
 pub use server::{mcp_config_json, serve};
 pub use state::{CanvasState, RebuildRequest, Selection, SharedState};
 
@@ -132,6 +138,8 @@ mod tests {
         .await;
         let tools: Vec<_> = list["result"]["tools"].as_array().unwrap().to_vec();
         let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"get_board_state"));
+        assert!(names.contains(&"check_layout"));
         assert!(names.contains(&"build"));
         assert!(names.contains(&"get_schematic"));
         assert!(names.contains(&"get_selection"));
@@ -145,7 +153,63 @@ mod tests {
         assert!(names.contains(&"add_lcsc_component"));
         assert!(names.contains(&"fetch_datasheet"));
         assert!(names.contains(&"zener_reference"));
-        assert_eq!(names.len(), 16);
+        assert_eq!(names.len(), 18);
+
+        // Every tool carries MCP annotations so clients can tell
+        // inspection from mutation.
+        for t in &tools {
+            let a = &t["annotations"];
+            assert!(a["readOnlyHint"].is_boolean(), "{} missing annotations", t["name"]);
+            assert!(a["title"].is_string(), "{} missing title", t["name"]);
+        }
+        let by_name = |n: &str| {
+            tools
+                .iter()
+                .find(|t| t["name"] == n)
+                .expect("tool present")
+                .clone()
+        };
+        assert_eq!(by_name("get_schematic")["annotations"]["readOnlyHint"], true);
+        assert_eq!(by_name("add_lcsc_component")["annotations"]["readOnlyHint"], false);
+        assert_eq!(by_name("add_lcsc_component")["annotations"]["openWorldHint"], true);
+    }
+
+    #[tokio::test]
+    async fn board_state_serves_orientation_and_manual() {
+        let state = fixture_state();
+        state.set_selection(Selection {
+            paths: vec!["R1".into()],
+            note: None,
+        });
+        let (text, is_error) =
+            tools::call_tool(&state, "get_board_state", &serde_json::json!({})).await;
+        assert!(!is_error);
+        let detail: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(detail["build"]["ok"], true);
+        assert_eq!(detail["top_level"][0]["path"], "root.R1");
+        assert_eq!(detail["selection"]["paths"][0], "R1");
+        assert!(detail["manual"]
+            .as_str()
+            .unwrap()
+            .contains("Working in etchable"));
+    }
+
+    #[tokio::test]
+    async fn check_layout_reports_clean_fixture() {
+        let state = fixture_state();
+        let (text, is_error) =
+            tools::call_tool(&state, "check_layout", &serde_json::json!({})).await;
+        assert!(!is_error, "{text}");
+        let detail: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(detail["status"], "clean");
+        assert_eq!(detail["checked"]["components"], 1);
+
+        // Refdes scoping resolves like everywhere else.
+        let (text, is_error) =
+            tools::call_tool(&state, "check_layout", &serde_json::json!({"scope": "R1"})).await;
+        assert!(!is_error, "{text}");
+        let detail: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(detail["scope"], "root.R1");
     }
 
     #[tokio::test]

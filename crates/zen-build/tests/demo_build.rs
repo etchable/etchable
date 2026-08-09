@@ -101,4 +101,15 @@ fn builds_demo_board() {
             "id_map target {target} is neither instance path nor net name"
         );
     }
+
+    // The layout lint runs on a real board and the derived layout is clean —
+    // the packer spaces components out, so any problem here is a regression
+    // in either the layout pass or the checker's tolerances.
+    let report = zen_build::check_layout(sch, None);
+    assert_eq!(report.components, 4);
+    assert!(
+        report.problems.is_empty(),
+        "derived demo layout should lint clean: {:?}",
+        report.problems
+    );
 }
