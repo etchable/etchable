@@ -12,6 +12,19 @@ use crate::{agent, builder};
 
 type CmdResult<T> = Result<T, String>;
 
+/// Ask for a rebuild NOW instead of waiting out the watcher's debounce —
+/// gesture commands call this right after their write so the canvas
+/// answers as fast as the build allows. The watcher's own (deterministic,
+/// byte-identical) echo is deduped in the frontend.
+fn nudge_build(state: &SharedAppState) {
+    let _ = state.build_tx.try_send(BuildRequest {
+        reload: false,
+        reload_project: false,
+        build: true,
+        reply: None,
+    });
+}
+
 /// Bring one project window forward and tuck the dashboard away.
 fn show_project_window(app: &AppHandle, label: &str) {
     if let Some(w) = app.get_webview_window(label) {
@@ -418,59 +431,776 @@ pub async fn get_state(
 }
 
 #[derive(serde::Deserialize)]
-pub struct PositionIn {
+pub struct MoveIn {
+    /// Schematic-space center (get_circuit_json units, y-up).
     pub x: f64,
     pub y: f64,
+    /// Degrees; omitted keeps the authored rotation or, for never-authored
+    /// components, the DERIVED orientation (rail idioms stand vertical).
     #[serde(default)]
-    pub rotation: f64,
+    pub rotation: Option<f64>,
+    /// Degrees added to whatever the base rotation resolves to — the
+    /// rotate gesture (the client can't know derived bases).
     #[serde(default)]
-    pub mirror: Option<String>,
+    pub rotate_by: Option<f64>,
 }
 
-/// Persist authored positions into the open board file as a trailing
-/// `# pcb:sch` block. Save-all by design: the layout's all-or-nothing
-/// authored rule expects every component's position in one write. The fs
-/// watcher picks the write up and rebuilds — that rebuild IS the edit loop's
-/// confirmation. `base_hash` is the `source_hash` of the build the edit was
-/// made against; a mismatch means someone (likely the agent) changed the
-/// file since, and the stale edit is rejected.
+/// Persist canvas moves: PARTIAL schematic-space moves merged server-side
+/// into the save-all map the layout's all-or-nothing authored rule expects
+/// (`merge_positions` fills every unmoved component from its authored or
+/// derived spot — including derived ORIENTATION, so the first save never
+/// flips rail idioms flat). The fs watcher picks the write up and rebuilds —
+/// that rebuild IS the edit loop's confirmation. `base_hash` is the
+/// `source_hash` of the build the edit was made against; a mismatch means
+/// someone (likely the agent) changed the file since, and the stale edit is
+/// rejected.
 #[tauri::command]
 pub fn save_positions(
     registry: State<'_, Registry>,
     window: tauri::WebviewWindow,
-    positions: std::collections::BTreeMap<String, PositionIn>,
+    moves: std::collections::BTreeMap<String, MoveIn>,
     base_hash: String,
 ) -> CmdResult<()> {
     let state = instance(&registry, &window)?;
-    let Some(source) = state.canvas.read(|s| s.source.clone()) else {
-        return Err("no board open".into());
-    };
-    let current = zen_build::content_hash(&source).map_err(|e| e.to_string())?;
-    if current != base_hash {
-        return Err("content modified".into());
+    let (source, sch) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    if moves.is_empty() {
+        return Err("no moves to save".into());
     }
-    let map: std::collections::BTreeMap<String, zen_build::PositionDoc> = positions
-        .into_iter()
-        .map(|(path, p)| {
-            let key = path
-                .strip_prefix("root.")
-                .ok_or_else(|| format!("not an instance path: {path}"))?
+    // Paths the build doesn't know yet (a provisional part on a red board)
+    // can't merge — convert them directly; write_positions merges into the
+    // block without touching anything else.
+    let mut known: std::collections::BTreeMap<String, zen_build::MovedPosition> =
+        Default::default();
+    let mut extra: std::collections::BTreeMap<String, zen_build::PositionDoc> =
+        Default::default();
+    for (path, m) in moves {
+        if sch.as_ref().is_some_and(|s| s.instance(&path).is_some()) {
+            known.insert(
+                path,
+                zen_build::MovedPosition {
+                    x: m.x,
+                    y: m.y,
+                    rotation: m.rotation,
+                    rotate_by: m.rotate_by,
+                },
+            );
+        } else if let Some(key) = path.strip_prefix("root.") {
+            extra.insert(
+                key.to_string(),
+                zen_build::PositionDoc {
+                    x: m.x * 25.4,
+                    y: -m.y * 25.4,
+                    rotation: m.rotation.unwrap_or(0.0) + m.rotate_by.unwrap_or(0.0),
+                    mirror: None,
+                },
+            );
+        } else {
+            return Err(format!("not an instance path: {path}"));
+        }
+    }
+    // The schematic is only needed to merge KNOWN components; all-unknown
+    // moves (a provisional part while the build is hard-failing) go direct.
+    let mut full = if known.is_empty() {
+        Default::default()
+    } else {
+        let sch = sch.ok_or("no schematic to merge against")?;
+        zen_build::merge_positions(&sch, &known).map_err(|e| e.to_string())?
+    };
+    full.extend(extra);
+    // Through the shared write gate: serialized against the agent's
+    // structured writes, hash-guarded, snapshotted for undo.
+    state
+        .canvas
+        .gate()
+        .apply("move", &[source.clone()], Some((&source, &base_hash)), || {
+            zen_build::write_positions(&source, &full)
+        })
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(())
+}
+
+/// Place one instance (decision 0009 phase 1): the append-shaped structured
+/// writer, through the write gate. `base_hash` is the `source_hash` of the
+/// build the ghost was placed against; a mismatch rejects the drop (the
+/// canvas re-offers after the rebuild).
+#[tauri::command]
+pub fn add_instance(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    module: String,
+    name: String,
+    attrs: Vec<(String, String)>,
+    position: Option<zen_build::PlacedPosition>,
+    base_hash: String,
+) -> CmdResult<zen_build::AddInstanceResult> {
+    let state = instance(&registry, &window)?;
+    let (source, root, stdlib, sch) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let req = zen_build::AddInstanceRequest {
+        module,
+        name,
+        attrs,
+        position,
+    };
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "add_instance",
+            &[source.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::add_instance(
+                    &source,
+                    &root,
+                    &stdlib,
+                    sch.as_ref(),
+                    &req,
+                )?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Rename an instance: name literal + `# pcb:sch` key migration, one write.
+#[tauri::command]
+pub fn rename_instance(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    from: String,
+    to: String,
+    base_hash: String,
+) -> CmdResult<zen_build::RenameInstanceResult> {
+    let state = instance(&registry, &window)?;
+    let (source, root) = state
+        .canvas
+        .read(|s| (s.source.clone(), s.workspace_root.clone()));
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "rename_instance",
+            &[source.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::rename_instance(&source, &root, &from, &to)?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Rename a net from the canvas (double-click a label). The defining file
+/// resolves server-side from the build's editability map.
+#[tauri::command]
+pub fn rename_net(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    from: String,
+    to: String,
+    base_hash: String,
+) -> CmdResult<zen_build::RenameNetResult> {
+    let state = instance(&registry, &window)?;
+    let (source, root, def_file) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.build
+                .as_ref()
+                .and_then(|b| b.editability.as_ref())
+                .and_then(|e| e.nets.get(&from))
+                .and_then(|n| n.file.clone()),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let target = def_file.map(|f| root.join(f)).unwrap_or(source.clone());
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "rename_net",
+            &[target.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::rename_net(&target, &root, &from, &to)?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Attach a pin to a net (the label/rail gesture): the canvas passes the
+/// clicked component's instance path and pin; the anchor call site and its
+/// file resolve server-side from editability.
+#[tauri::command]
+pub fn attach_pin_net(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    instance_path: String,
+    pin: String,
+    net_name: String,
+    kind: String,
+    base_hash: String,
+) -> CmdResult<zen_build::AttachPinResult> {
+    let state = instance(&registry, &window)?;
+    // The same fallback-aware resolution as every other wiring door — a
+    // provisional part (root.NAME, unknown to a red build) resolves to its
+    // top-level name in the entry file.
+    let (file, ep) = wire_endpoint(&state, &instance_path, &pin)?;
+    let (source, root, stdlib) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let target = root.join(file);
+    let req = zen_build::AttachPinRequest {
+        instance: ep.instance,
+        pin: ep.pin,
+        net_name,
+        kind,
+    };
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "attach_pin_net",
+            &[target.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::attach_pin_net(&target, &root, &stdlib, &req)?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Resolve a canvas wiring endpoint (component instance path + pin) to the
+/// anchor call site's file and local name via editability. Instances the
+/// build doesn't know yet (just placed, build still red) fall back to the
+/// path's top-level name in the entry file — the writers' name-anchored
+/// resolution validates against the CURRENT source either way (a red board
+/// stays fully editable, PRD §8).
+fn wire_endpoint(
+    state: &SharedAppState,
+    path: &str,
+    pin: &str,
+) -> Result<(String, zen_build::PinEndpoint), String> {
+    state.canvas.read(|s| {
+        let fallback = || -> Result<(String, zen_build::PinEndpoint), String> {
+            // Only the provisional shape (`root.NAME`, a just-placed
+            // top-level part the build hasn't seen) falls back — deeper
+            // unknown paths must NOT silently retarget an ancestor.
+            let segs: Vec<&str> = path.split('.').collect();
+            let ["root", top] = segs.as_slice() else {
+                return Err(format!("no such instance: {path}"));
+            };
+            let (Some(source), Some(root)) = (&s.source, &s.workspace_root) else {
+                return Err("no board open".into());
+            };
+            let file = source
+                .strip_prefix(root)
+                .unwrap_or(source)
+                .display()
                 .to_string();
             Ok((
-                key,
-                zen_build::PositionDoc {
-                    x: p.x,
-                    y: p.y,
-                    rotation: p.rotation,
-                    mirror: p.mirror,
+                file,
+                zen_build::PinEndpoint {
+                    instance: top.to_string(),
+                    pin: pin.to_string(),
                 },
             ))
-        })
-        .collect::<Result<_, String>>()?;
-    if map.is_empty() {
-        return Err("no positions to save".into());
+        };
+        let Some(ed) = s.build.as_ref().and_then(|b| b.editability.as_ref()) else {
+            return fallback();
+        };
+        let Some(entry) = ed.instances.get(path) else {
+            return fallback();
+        };
+        let anchor = if entry.editable {
+            path.to_string()
+        } else {
+            entry.anchor.clone().ok_or_else(|| {
+                entry
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| format!("{path} is not editable"))
+            })?
+        };
+        let file = ed
+            .instances
+            .get(&anchor)
+            .and_then(|a| a.file.clone())
+            .ok_or_else(|| format!("no source file resolved for {anchor}"))?;
+        let instance = anchor
+            .rsplit('.')
+            .next()
+            .ok_or("bad anchor path")?
+            .to_string();
+        Ok((
+            file,
+            zen_build::PinEndpoint {
+                instance,
+                pin: pin.to_string(),
+            },
+        ))
+    })
+}
+
+/// Wire two pins (the drag gesture). Returns the tagged ConnectOutcome —
+/// `needs_merge` is not an error; the canvas confirms and retries with
+/// allow_merge.
+#[tauri::command]
+pub fn connect_pins(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    a_path: String,
+    a_pin: String,
+    b_path: String,
+    b_pin: String,
+    net: Option<String>,
+    allow_merge: bool,
+    base_hash: String,
+) -> CmdResult<serde_json::Value> {
+    let state = instance(&registry, &window)?;
+    let (mut a_file, mut a_ep) = wire_endpoint(&state, &a_path, &a_pin)?;
+    let (mut b_file, mut b_ep) = wire_endpoint(&state, &b_path, &b_pin)?;
+    let (source, root, stdlib, sch) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+
+    // Cross-module wiring resolves the way a human means it: a pin inside
+    // a module whose net flows out through a PORT becomes (module, port)
+    // at the board level. Only genuinely internal nets refuse.
+    let mut via_ports: Vec<String> = Vec::new();
+    if a_file != b_file {
+        let entry_rel = source
+            .strip_prefix(&root)
+            .unwrap_or(&source)
+            .display()
+            .to_string();
+        for (file, ep, path, pin) in [
+            (&mut a_file, &mut a_ep, &a_path, &a_pin),
+            (&mut b_file, &mut b_ep, &b_path, &b_pin),
+        ] {
+            if *file == entry_rel {
+                continue;
+            }
+            let translated = sch
+                .as_ref()
+                .map(|s| zen_build::translate_endpoint_via_port(s, &source, &root, path, pin))
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .flatten();
+            if let Some(t) = translated {
+                via_ports.push(format!("{}.{}", t.instance, t.pin));
+                *file = entry_rel.clone();
+                *ep = t;
+            }
+        }
+        if a_file != b_file {
+            let module = a_path
+                .split('.')
+                .nth(1)
+                .or_else(|| b_path.split('.').nth(1))
+                .unwrap_or("the module");
+            return Err(format!(
+                "that pin's net stays inside {module} and isn't exposed as a port — ask \
+                 the agent to expose it (add an io), or wire it inside the module"
+            ));
+        }
     }
-    zen_build::write_positions(&source, &map).map_err(|e| e.to_string())
+    let target = root.join(&a_file);
+    let req = zen_build::ConnectPinsRequest {
+        a: a_ep,
+        b: b_ep,
+        net,
+        allow_merge,
+    };
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "connect_pins",
+            &[target.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::connect_pins(
+                    &target,
+                    &root,
+                    &stdlib,
+                    sch.as_ref(),
+                    &req,
+                )?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    let mut payload =
+        serde_json::to_value(out.expect("write ran")).map_err(|e| e.to_string())?;
+    // Teach the model as it works: the toast names the port the wire
+    // resolved through.
+    if let Some(port) = via_ports.first() {
+        payload["via_port"] = serde_json::Value::String(port.clone());
+    }
+    Ok(payload)
+}
+
+/// Detach one pin from its net.
+#[tauri::command]
+pub fn disconnect_pin(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    instance_path: String,
+    pin: String,
+    base_hash: String,
+) -> CmdResult<zen_build::DisconnectResult> {
+    let state = instance(&registry, &window)?;
+    let (file, ep) = wire_endpoint(&state, &instance_path, &pin)?;
+    let (source, root, stdlib) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let target = root.join(&file);
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "disconnect_pin",
+            &[target.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::disconnect_pin(
+                    &target,
+                    &root,
+                    &stdlib,
+                    &ep.instance,
+                    &ep.pin,
+                )?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Set one attribute (double-click value edit). Anchor resolves
+/// server-side from editability.
+#[tauri::command]
+pub fn set_attribute(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    instance_path: String,
+    key: String,
+    value: String,
+    base_hash: String,
+) -> CmdResult<zen_build::SetAttributeResult> {
+    let state = instance(&registry, &window)?;
+    let (file, ep) = wire_endpoint(&state, &instance_path, "")?;
+    let (source, root, stdlib) = state.canvas.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+        )
+    });
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    let target = root.join(&file);
+    let mut out = None;
+    state
+        .canvas
+        .gate()
+        .apply(
+            "set_attribute",
+            &[target.clone()],
+            Some((&source, &base_hash)),
+            || {
+                out = Some(zen_build::set_attribute(
+                    &target,
+                    &root,
+                    &stdlib,
+                    &ep.instance,
+                    &key,
+                    &value,
+                )?);
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out.expect("write ran"))
+}
+
+/// Delete the selection (batch, grouped per file — one gate application).
+#[tauri::command]
+pub fn remove_instances(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    instance_paths: Vec<String>,
+    base_hash: String,
+) -> CmdResult<Vec<zen_build::RemoveInstancesResult>> {
+    let state = instance(&registry, &window)?;
+    let (source, root) = state
+        .canvas
+        .read(|s| (s.source.clone(), s.workspace_root.clone()));
+    let source = source.ok_or("no board open")?;
+    let root = root.ok_or("no workspace open")?;
+    // Resolve every path to its anchor, dedupe, group by file.
+    let mut by_file: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for path in &instance_paths {
+        let (file, ep) = wire_endpoint(&state, path, "")?;
+        let names = by_file.entry(file).or_default();
+        if !names.contains(&ep.instance) {
+            names.push(ep.instance);
+        }
+    }
+    if by_file.is_empty() {
+        return Err("nothing to remove".into());
+    }
+    let touches: Vec<PathBuf> = by_file.keys().map(|f| root.join(f)).collect();
+    let mut out = Vec::new();
+    state
+        .canvas
+        .gate()
+        .apply(
+            "remove_instances",
+            &touches,
+            Some((&source, &base_hash)),
+            || {
+                for (file, names) in &by_file {
+                    out.push(zen_build::remove_instances(
+                        &root.join(file),
+                        &root,
+                        names,
+                    )?);
+                }
+                Ok(())
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteGeneric {
+    pub name: String,
+    /// The Module("…") spec add_instance takes.
+    pub spec: String,
+    /// Refdes prefix for name suggestions (from the generic's Component).
+    pub prefix: Option<String>,
+    pub params: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteComponent {
+    pub name: String,
+    pub spec: String,
+    pub description: Option<String>,
+    pub lcsc: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaletteView {
+    pub generics: Vec<PaletteGeneric>,
+    pub components: Vec<PaletteComponent>,
+}
+
+/// Pre-warm the placement preflight when a palette item is ARMED: by the
+/// time the user drops, the pin set and geometry are cached and the drop
+/// commits without evaluator round-trips inside the click. Returns the
+/// part's real outline for the aiming ghost.
+#[tauri::command]
+pub async fn warm_placement(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    spec: String,
+) -> CmdResult<Option<zen_build::GhostGeometry>> {
+    let state = instance(&registry, &window)?;
+    let (root, stdlib) = state.canvas.read(|s| {
+        (
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+        )
+    });
+    let Some(root) = root else {
+        return Ok(None);
+    };
+    Ok(
+        tokio::task::spawn_blocking(move || zen_build::warm_placement(&root, &stdlib, &spec))
+            .await
+            .unwrap_or(None),
+    )
+}
+
+/// The palette's offline tier: stdlib generics (with refdes prefixes) and
+/// this project's components.
+#[tauri::command]
+pub fn get_palette(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<PaletteView> {
+    let state = instance(&registry, &window)?;
+    let (stdlib, project, root) = state.canvas.read(|s| {
+        (
+            s.stdlib_dir.clone(),
+            s.project.clone(),
+            s.workspace_root.clone().unwrap_or_default(),
+        )
+    });
+    let stdlib = stdlib.ok_or("no workspace open yet")?;
+    let listing = zen_build::list_library(&stdlib, project.as_ref(), None);
+    let generics = listing
+        .generics
+        .iter()
+        .map(|g| {
+            let spec = format!("@stdlib/generics/{}.zen", g.name);
+            let facts = zen_build::module_facts(&spec, &root, &stdlib);
+            PaletteGeneric {
+                name: g.name.clone(),
+                spec,
+                prefix: facts.prefix,
+                params: g.params.clone(),
+            }
+        })
+        .collect();
+    let components = listing
+        .project_components
+        .iter()
+        .map(|c| PaletteComponent {
+            name: c.name.clone(),
+            spec: format!("./components/{}.zen", c.name),
+            description: c.description.clone(),
+            lcsc: c.lcsc.clone(),
+        })
+        .collect();
+    Ok(PaletteView {
+        generics,
+        components,
+    })
+}
+
+/// The palette's live tier: JLCPCB assembly search (stock, price,
+/// Basic/Extended), ranked Basic-first — the same data the agent's
+/// search_parts sees.
+#[tauri::command]
+pub async fn search_lcsc(query: String) -> CmdResult<serde_json::Value> {
+    Ok(mcp::lcsc_tools::search_tier(&query).await)
+}
+
+/// Pre-commit part detail (lifecycle, price breaks, CAD-quality probe).
+#[tauri::command]
+pub async fn lcsc_part_detail(code: String) -> CmdResult<serde_json::Value> {
+    Ok(mcp::lcsc_tools::get_part(&code).await)
+}
+
+/// Install an LCSC part into components/ (fetch → convert → vendor → card)
+/// — the same pipeline as the agent's add_component. Scaffold writes only
+/// touch new `components/<name>.*` paths (its own clobber guard applies),
+/// so this skips the board-file write gate; the returned component is then
+/// placed via `add_instance` like anything else.
+#[tauri::command]
+pub async fn lcsc_install(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+    name: String,
+    lcsc: String,
+) -> CmdResult<serde_json::Value> {
+    let state = instance(&registry, &window)?;
+    let root = state
+        .canvas
+        .read(|s| s.project.as_ref().map(|p| p.root.clone()))
+        .ok_or("no project open — installing parts requires an etchable project")?;
+    mcp::lcsc_tools::add_component(
+        &root,
+        &mcp::lcsc_tools::AddLcscArgs {
+            name,
+            lcsc,
+            include_3d: true,
+            fetch_datasheet: true,
+            overwrite: false,
+        },
+    )
+    .await
+}
+
+/// Undo the newest canvas gesture (gate snapshots). Returns the gesture's
+/// label; refuses (and drops the entry) if the agent or an editor wrote the
+/// file since — invalidate, never clobber. The watcher rebuild confirms.
+#[tauri::command]
+pub fn undo_gesture(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<String> {
+    let state = instance(&registry, &window)?;
+    let label = state.canvas.gate().undo().map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(label)
+}
+
+#[tauri::command]
+pub fn redo_gesture(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<String> {
+    let state = instance(&registry, &window)?;
+    let label = state.canvas.gate().redo().map_err(|e| e.to_string())?;
+    nudge_build(&state);
+    Ok(label)
 }
 
 /// Canvas selection changed. Paths are instance paths and/or net names.

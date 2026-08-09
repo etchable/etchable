@@ -229,11 +229,17 @@ fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, ms
         .read(|s| s.source.clone())
         .map(|p| p.display().to_string())
         .unwrap_or_default();
+    let (schematic, editability) = state.canvas.read(|s| {
+        let b = s.build.as_ref();
+        (
+            b.and_then(|b| b.schematic.clone()),
+            b.and_then(|b| b.editability.clone()),
+        )
+    });
     let output = zen_build::BuildOutput {
         source,
-        schematic: state
-            .canvas
-            .read(|s| s.build.as_ref().and_then(|b| b.schematic.clone())),
+        schematic,
+        editability,
         diagnostics: vec![zen_build::Diag {
             severity: zen_build::Severity::Error,
             message: msg.clone(),

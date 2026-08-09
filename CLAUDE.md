@@ -109,7 +109,7 @@ the trajectory).
   (the entry can change) and other `*.toml`/datasheet changes to a
   project-only refresh (`project-changed` event, no build flash).
 - Agent scaffolding harness (docs/decisions/0003, amended by 0004 and
-  0006): the MCP surface is 19 tools; sourcing never needs Bash. Tool
+  0006): the MCP surface is 27 tools; sourcing never needs Bash. Tool
   names are vendor-neutral; vendor-specific arguments are keyed by vendor
   name (`lcsc: "C…"`), mirroring the cards' `[vendors.<name>]` sections —
   a future vendor adds an argument key, never a tool.

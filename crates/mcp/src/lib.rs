@@ -4,6 +4,7 @@
 //! `--mcp-config`, so there is zero user setup.
 
 pub mod datasheet;
+pub mod gate;
 pub mod lcsc_tools;
 pub mod search;
 pub mod server;
@@ -20,6 +21,7 @@ pub const ZENER_REFERENCE: &str = include_str!("../assets/zener-language-skill.m
 /// clients get the same rules and the two can never drift.
 pub const BOARD_MANUAL: &str = include_str!("../assets/board-manual.md");
 
+pub use gate::{WriteError, WriteGate};
 pub use server::{mcp_config_json, serve};
 pub use state::{CanvasState, RebuildRequest, Selection, SharedState};
 
@@ -98,6 +100,7 @@ mod tests {
                 by_refdes: BTreeMap::from([("R1".to_string(), "root.R1".to_string())]),
             }),
             diagnostics: vec![],
+            editability: None,
         });
         state
     }
@@ -154,7 +157,7 @@ mod tests {
         assert!(names.contains(&"zener_reference"));
         assert!(names.contains(&"set_positions"));
         assert!(names.contains(&"find_empty_space"));
-        assert_eq!(names.len(), 19);
+        assert_eq!(names.len(), 27);
 
         // Every tool carries MCP annotations so clients can tell
         // inspection from mutation.

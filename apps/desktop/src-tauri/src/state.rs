@@ -179,7 +179,7 @@ pub struct UiStateSnapshot {
 
 /// Versioned `build-finished` payload / snapshot build state. The UI rejects
 /// mismatched versions loudly — bump when the shape changes.
-pub const BUILD_PAYLOAD_VERSION: u32 = 3;
+pub const BUILD_PAYLOAD_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildView {
@@ -194,6 +194,9 @@ pub struct BuildView {
     /// SHA-256 of the board source at build time — the optimistic-concurrency
     /// token `save_positions` requires.
     pub source_hash: Option<String>,
+    /// Which instances/nets structured writers may target (decision 0009);
+    /// the canvas greys out edit affordances from this before any gesture.
+    pub editability: Option<zen_build::EditabilityDoc>,
 }
 
 impl BuildView {
@@ -212,6 +215,7 @@ impl BuildView {
             circuit_json: cj.elements,
             id_map: cj.id_map,
             source_hash,
+            editability: out.editability.clone(),
         }
     }
 }
@@ -234,6 +238,7 @@ mod build_view_tests {
             source: "board.zen".into(),
             schematic: None,
             diagnostics: vec![],
+            editability: None,
         };
         let view = BuildView::new(&out, Some(&board));
         assert_eq!(

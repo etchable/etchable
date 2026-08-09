@@ -12,7 +12,7 @@ import type {
   BuildSummary,
   BuildView,
   Diag,
-  PositionIn,
+  MoveIn,
   ProjectView,
   SessionSummary,
 } from "./types";
@@ -78,8 +78,17 @@ export function useEtchable() {
         setBoardError(msg);
         return false;
       }
-      setBuild(view);
-      if (view.schematic) setLastGood(view);
+      // Gesture commands nudge an immediate rebuild and the watcher echoes
+      // ~150ms later with byte-identical results — keep the previous object
+      // so nothing re-renders for the echo.
+      const same = (prev: BuildView | null) =>
+        prev !== null &&
+        prev.source === view.source &&
+        prev.source_hash !== null &&
+        prev.source_hash === view.source_hash &&
+        !!prev.schematic === !!view.schematic;
+      setBuild((prev) => (same(prev) ? prev : view));
+      if (view.schematic) setLastGood((prev) => (same(prev) ? prev : view));
       return true;
     };
 
@@ -223,14 +232,118 @@ export function useEtchable() {
     });
   }, []);
 
-  // Drag-to-move persistence: write authored positions into the board file.
+  // Drag-to-move persistence: PARTIAL schematic-space moves; the backend
+  // merges the save-all map (keeping derived orientations for the rest).
   // The watcher-triggered rebuild is the loop's confirmation; a "content
   // modified" rejection means the file changed under the edit (e.g. an agent
   // write) and that rebuild is already on its way — drop the stale edit.
   const savePositions = useCallback(
-    (positions: Record<string, PositionIn>, baseHash: string) => {
-      void invoke("save_positions", { positions, baseHash }).catch((err) => {
+    (moves: Record<string, MoveIn>, baseHash: string) => {
+      void invoke("save_positions", { moves, baseHash }).catch((err) => {
         console.warn("save_positions rejected:", err);
+      });
+    },
+    [],
+  );
+
+  // Place one instance (decision 0009 phase 1): a single gated write of the
+  // board file. Throws on rejection — the drop form shows the reason (a
+  // "content modified" error means the board changed under the gesture; the
+  // rebuild is already on its way, re-try against it).
+  const addInstance = useCallback(
+    async (
+      module: string,
+      name: string,
+      attrs: [string, string][],
+      position: { x: number; y: number; rotation: number } | null,
+      baseHash: string,
+    ): Promise<import("./types").AddInstanceResult> => {
+      return await invoke("add_instance", { module, name, attrs, position, baseHash });
+    },
+    [],
+  );
+
+  // Attach a pin to a net (the label/rail gesture, phase 2). The backend
+  // resolves the anchor call site from editability; throws with the reason.
+  const attachPinNet = useCallback(
+    async (
+      instancePath: string,
+      pin: string,
+      netName: string,
+      kind: string,
+      baseHash: string,
+    ) => {
+      await invoke("attach_pin_net", { instancePath, pin, netName, kind, baseHash });
+    },
+    [],
+  );
+
+  const renameNet = useCallback(async (from: string, to: string, baseHash: string) => {
+    await invoke("rename_net", { from, to, baseHash });
+  }, []);
+
+  // Pre-warm a palette part's placement (pins + real geometry cached
+  // backend-side; returns the outline for the aiming ghost).
+  const warmPlacement = useCallback(
+    async (spec: string): Promise<import("./types").GhostGeometry | null> => {
+      try {
+        return (await invoke("warm_placement", { spec })) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  // Value/param edit (phase 4): one kwarg replaced as a string literal.
+  const setAttribute = useCallback(
+    async (instancePath: string, key: string, value: string, baseHash: string) => {
+      await invoke("set_attribute", { instancePath, key, value, baseHash });
+    },
+    [],
+  );
+
+  const renameInstance = useCallback(
+    async (from: string, to: string, baseHash: string) => {
+      await invoke("rename_instance", { from, to, baseHash });
+    },
+    [],
+  );
+
+  // Delete the selection (batch, server resolves anchors + prunes orphans).
+  const removeInstances = useCallback(
+    async (instancePaths: string[], baseHash: string) => {
+      await invoke("remove_instances", { instancePaths, baseHash });
+    },
+    [],
+  );
+
+  // Gesture undo/redo over the write gate's snapshots; resolves to the
+  // gesture's label ("move", "connect_pins", …) for the toast.
+  const undoGesture = useCallback(async () => {
+    return await invoke<string>("undo_gesture");
+  }, []);
+  const redoGesture = useCallback(async () => {
+    return await invoke<string>("redo_gesture");
+  }, []);
+
+  // Wire two pins (phase 3). needs_merge comes back as a value, not an
+  // error — the canvas confirms and retries with allowMerge.
+  const connectPins = useCallback(
+    async (
+      a: { path: string; pin: string },
+      b: { path: string; pin: string },
+      allowMerge: boolean,
+      baseHash: string,
+    ): Promise<import("./types").ConnectOutcome> => {
+      return await invoke("connect_pins", {
+        aPath: a.path,
+        aPin: a.pin,
+        bPath: b.path,
+        bPin: b.pin,
+        net: null,
+        allowMerge,
+        baseHash,
       });
     },
     [],
@@ -352,6 +465,16 @@ export function useEtchable() {
     rebuild,
     setSelection,
     savePositions,
+    addInstance,
+    warmPlacement,
+    attachPinNet,
+    renameNet,
+    connectPins,
+    setAttribute,
+    renameInstance,
+    removeInstances,
+    undoGesture,
+    redoGesture,
     sendMessage,
     respondPermission,
     interruptAgent,

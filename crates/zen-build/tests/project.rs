@@ -62,6 +62,7 @@ fn scaffold_round_trips_and_builds() {
         source: out.source,
         schematic: Some(sch),
         diagnostics: vec![],
+        editability: None,
     });
 
     let _ = fs::remove_dir_all(&parent);

@@ -33,6 +33,41 @@ Zener looks like Python but is not; the schematic is derived, not drawn.
   layer (batch: pass every move in one call; coordinates match
   `get_circuit_json` centers).
 
+## Structured edits — prefer the verbs over raw text edits
+
+The canvas and you share one edit layer: `add_instance`,
+`rename_instance`, `set_attribute`, `remove_instance`, `create_net`,
+`rename_net`, `connect_pins`, and `disconnect_pin` are the same writers
+the user's gestures run. Prefer
+them over hand-editing .zen for what they cover — they are serialized
+against the user's concurrent gestures, formatting-safe, keep positions
+migrated, and keep the user's undo model coherent. Text-edit only what
+the verbs can't express (loops, helpers, module authoring).
+
+- `add_instance` places one instance: it ensures the `Module("…")`
+  binding, inserts the call in the conventional spot, and (given x/y)
+  writes the authored position for the whole board in the same save-all
+  write. Pair with `find_empty_space` for a clear spot.
+- `rename_instance` renames the `name="…"` literal and migrates
+  `# pcb:sch` keys — never rename by text-editing, which orphans
+  positions.
+- `create_net` defines a net (prefer typed Power/Ground rails);
+  `rename_net` renames the variable, the string, and every reference in
+  one write, migrating net-symbol positions — a text-edit rename misses
+  references and orphans positions.
+- `connect_pins` wires two pins (it picks or creates the shared net and
+  prunes what that orphans); `disconnect_pin` detaches one. A connect
+  that would merge two shared nets returns `needs_merge` — ask the user
+  before retrying with `allow_merge`. Endpoints must share one module
+  scope; wiring into a submodule goes through its io port.
+- `set_attribute` changes value/package/etc. on the creating call;
+  `remove_instance` deletes one and prunes what that orphans — confirm
+  with the user before removing their work.
+- `get_instance` reports `editability` for anything on the board: whether
+  a structured edit can target it, why not, and which ancestor (`anchor`)
+  an edit must land on. Generated instances (loops, computed names)
+  refuse — edit their generating source instead.
+
 ## Generative structure
 
 Zener is Starlark: the source language has comprehensions, `for` loops,

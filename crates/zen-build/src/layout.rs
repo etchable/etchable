@@ -954,6 +954,26 @@ fn pack_by_connectivity(
 // Sizing, placement, pin geometry
 // ---------------------------------------------------------------------------
 
+/// The rotation equivalent of the DERIVED orientation for a component —
+/// what a save-all snapshot must record so the authored render keeps the
+/// derived look. Rail idioms stand vertical via symbol VARIANTS (decision
+/// 0008), so writing rotation 0 for them flips the board horizontal the
+/// first time positions become authored. Mirrors `size_node`'s resolution
+/// exactly, including the failed-vertical-glyph fallback.
+pub(crate) fn derived_rotation(sch: &SchematicDoc, inst: &InstanceDoc) -> f64 {
+    let role = rail_role(sch, inst);
+    let orient = vertical_orient(sch, inst, role);
+    if role != RailRole::Flow && !matches!(resolve_comp(inst, orient), ResolvedComp::Glyph(..)) {
+        return 0.0;
+    }
+    match orient {
+        Orient::Right => 0.0,
+        Orient::Up => 90.0,
+        Orient::Left => 180.0,
+        Orient::Down => 270.0,
+    }
+}
+
 fn size_node(sch: &SchematicDoc, inst: &InstanceDoc) -> SizedNode {
     if inst.kind == InstanceKind::Component {
         // Rail idioms stand vertical (rail pin facing its rail); a failed

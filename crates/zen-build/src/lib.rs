@@ -8,6 +8,7 @@
 mod catalog;
 mod circuit_json;
 mod convert;
+mod edit;
 mod frozen;
 mod layout;
 mod layout_check;
@@ -33,6 +34,16 @@ pub use model::*;
 pub use catalog::{
     list_library, resolve_library_path, symbol_pins, FootprintLibraryInfo, GenericInfo,
     LibraryListing, ProjectComponentInfo, SymbolLibraryInfo, SymbolPinInfo, SymbolPins,
+};
+pub use edit::{
+    add_instance, analyze_editability, attach_pin_net, connect_pins, create_net, disconnect_pin,
+    module_facts, port_for_net, probe_module_ios, remove_instances, rename_instance, rename_net,
+    set_attribute, translate_endpoint_via_port, validate_attr, warm_placement, GhostGeometry,
+    GhostPin,
+    AddInstanceRequest, AddInstanceResult, AttachPinRequest, AttachPinResult, ConnectOutcome,
+    ConnectPinsRequest, CreateNetResult, DisconnectResult, EditabilityDoc, InstanceEdit,
+    ModuleFacts, NetEdit, PinEndpoint, PlacedPosition, RemoveInstancesResult,
+    RenameInstanceResult, RenameNetResult, SetAttributeResult,
 };
 pub use positions::{content_hash, merge_positions, write_positions, MovedPosition};
 pub use scaffold::{
@@ -150,11 +161,15 @@ impl Workspace {
             .schematic
             .map(|mut s| convert::convert_schematic(&mut s, &self.root));
         let diagnostics = convert::convert_diagnostics(&raw.diagnostics, &self.root);
+        let editability = schematic
+            .as_ref()
+            .map(|s| edit::analyze_editability(s, &self.root));
 
         Ok(BuildOutput {
             source,
             schematic,
             diagnostics,
+            editability,
         })
     }
 }

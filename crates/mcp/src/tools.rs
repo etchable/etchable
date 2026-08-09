@@ -43,6 +43,17 @@ fn read_only_network(title: &str) -> Value {
     })
 }
 
+/// Removes user work — clients should confirm before calling.
+fn destructive(title: &str) -> Value {
+    json!({
+        "title": title,
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+    })
+}
+
 /// Writes into the project (never destroys without an explicit overwrite).
 fn writes_project(title: &str, network: bool) -> Value {
     json!({
@@ -102,7 +113,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_instance",
-            description: "Full detail for one instance (by path or refdes): type, attributes, pins with connected nets, children, source file.",
+            description: "Full detail for one instance (by path or refdes): type, attributes, pins with connected nets, children, source file, and editability (whether structured edits can target its creating call, with the reason and nearest editable anchor when not).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -198,6 +209,124 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "additionalProperties": false
             }),
             annotations: read_only("Find empty space"),
+        },
+        ToolDef {
+            name: "add_instance",
+            description: "Place a new instance on the open board file: ensures the Module(\"…\") binding, inserts `Binding(name=\"…\", …)` after the last instantiation (above Board(...)), and — when x/y are given — snapshots every component's authored position plus the new one in the SAME single write. Attrs become string-literal kwargs. Refuses on name collisions, generated-name clashes, and unparseable source. The watcher rebuild is the confirmation.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "module": {"type": "string", "description": "Module spec exactly as it appears in Module(\"…\"): @stdlib/generics/Resistor.zen or ./components/Name.zen"},
+                    "name": {"type": "string", "description": "Instance name (unique on the board, e.g. R5)"},
+                    "attrs": {"type": "object", "additionalProperties": {"type": "string"}, "description": "kwargs after name=, emitted as string literals (value, package, …)"},
+                    "x": {"type": "number", "description": "Authored center x in schematic space (get_circuit_json units). Omit x/y to let the layout derive the position."},
+                    "y": {"type": "number", "description": "Authored center y (schematic space, y-up)"},
+                    "rotation": {"type": "number", "description": "Degrees (default 0)"}
+                },
+                "required": ["module", "name"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Add instance", false),
+        },
+        ToolDef {
+            name: "rename_instance",
+            description: "Rename an instance on the open board file: rewrites the unique top-level call's name=\"…\" literal and migrates its # pcb:sch position keys in the same write. Instance paths and selection references change with it.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "Current instance name (the name= literal, e.g. R5)"},
+                    "to": {"type": "string", "description": "New instance name"}
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Rename instance", false),
+        },
+        ToolDef {
+            name: "connect_pins",
+            description: "Wire two pins together (the compound edit): picks or creates the shared net (schematic port counts rank which side wins; a fresh net is pin-derived like R1_P2), points both kwargs at it, and prunes definitions that orphans — one write. Endpoints are instance paths or refdes plus a pin/io name; both must resolve to literal calls in ONE file (cross-module wiring goes through the module's io port). A connect joining two shared nets returns outcome=needs_merge — confirm with the user, then retry with allow_merge:true.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "a": {"type": "object", "properties": {"instance": {"type": "string", "description": "Instance path or refdes"}, "pin": {"type": "string"}}, "required": ["instance", "pin"], "additionalProperties": false},
+                    "b": {"type": "object", "properties": {"instance": {"type": "string"}, "pin": {"type": "string"}}, "required": ["instance", "pin"], "additionalProperties": false},
+                    "net": {"type": "string", "description": "Explicit name when a net is created"},
+                    "allow_merge": {"type": "boolean", "description": "Permit merging two shared nets (after user confirmation)"}
+                },
+                "required": ["a", "b"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Connect pins", false),
+        },
+        ToolDef {
+            name: "disconnect_pin",
+            description: "Detach one pin from its net: required ios revert to a fresh placeholder net, optional ios drop the kwarg; an orphaned net definition prunes in the same write.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "instance": {"type": "string", "description": "Instance path or refdes"},
+                    "pin": {"type": "string"}
+                },
+                "required": ["instance", "pin"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Disconnect pin", false),
+        },
+        ToolDef {
+            name: "set_attribute",
+            description: "Set one attribute kwarg on an instance's creating call to a string literal (value, package, color, …). Pins refuse toward connect_pins; `name` toward rename_instance.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "instance": {"type": "string", "description": "Instance path or refdes"},
+                    "key": {"type": "string", "description": "Attribute name (value, package, …)"},
+                    "value": {"type": "string", "description": "New value, emitted as a string literal"}
+                },
+                "required": ["instance", "key", "value"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Set attribute", false),
+        },
+        ToolDef {
+            name: "remove_instance",
+            description: "Delete an instance: the call statement goes, net definitions and Module bindings nothing else references prune in the same write, and its # pcb:sch keys drop. Confirm with the user before removing their work.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "instance": {"type": "string", "description": "Instance path or refdes"}
+                },
+                "required": ["instance"],
+                "additionalProperties": false
+            }),
+            annotations: destructive("Remove instance"),
+        },
+        ToolDef {
+            name: "create_net",
+            description: "Define a net on the open board file: inserts `NAME = Kind(\"NAME\")` after the last net definition. Prefer typed rails (Power/Ground) over bare Net — the canvas draws rail idioms from the kind.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Net name (also the bound variable, - mapped to _)"},
+                    "kind": {"type": "string", "enum": ["Net", "Power", "Ground"], "description": "Net constructor"}
+                },
+                "required": ["name", "kind"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Create net", false),
+        },
+        ToolDef {
+            name: "rename_net",
+            description: "Rename a net: rewrites the defining assignment's variable AND string literal plus every reference in the defining file (variable and net name are one identity), and migrates net-symbol # pcb:sch keys in the same write. Refuses on generated/io-scoped nets (see get_board_state editability) and shadowed variables.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "Current net name"},
+                    "to": {"type": "string", "description": "New net name"}
+                },
+                "required": ["from", "to"],
+                "additionalProperties": false
+            }),
+            annotations: writes_project("Rename net", false),
         },
         ToolDef {
             name: "list_library",
@@ -365,6 +494,14 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
         }),
         "check_layout" => with_build(state, |build| check_layout(build, args)),
         "set_positions" => set_positions(state, args),
+        "add_instance" => add_instance_tool(state, args),
+        "rename_instance" => rename_instance_tool(state, args),
+        "create_net" => create_net_tool(state, args),
+        "rename_net" => rename_net_tool(state, args),
+        "connect_pins" => connect_pins_tool(state, args),
+        "disconnect_pin" => disconnect_pin_tool(state, args),
+        "set_attribute" => set_attribute_tool(state, args),
+        "remove_instance" => remove_instance_tool(state, args),
         "find_empty_space" => with_build(state, |build| {
             let Some(sch) = &build.schematic else {
                 return err("build produced no schematic (fix errors first)".into());
@@ -701,40 +838,38 @@ fn set_positions(state: &SharedState, args: &Value) -> (String, bool) {
     if map.is_empty() {
         return err("positions is empty — nothing to move".into());
     }
-    state.read(|s| {
+    // Gather everything under the read lock; the guarded write runs through
+    // the gate afterwards so file IO never holds the canvas lock.
+    let prep = state.read(|s| {
         let Some(build) = &s.build else {
-            return err("no build available yet — open a board or call build first".into());
+            return Err(err(
+                "no build available yet — open a board or call build first".into(),
+            ));
         };
         let Some(sch) = &build.schematic else {
-            return err("build produced no schematic (fix errors first)".into());
+            return Err(err("build produced no schematic (fix errors first)".into()));
         };
         let Some(source) = &s.source else {
-            return err("no board open".into());
+            return Err(err("no board open".into()));
         };
-        let current = match zen_build::content_hash(source) {
-            Ok(h) => h,
-            Err(e) => return err(format!("{e:#}")),
+        let Some(hash) = &s.source_hash else {
+            return Err(err(
+                "no staleness token for the current build — call build first".into(),
+            ));
         };
-        if s.source_hash.as_deref() != Some(current.as_str()) {
-            return err(
-                "board source changed since the last build — call build first so moves merge \
-                 against the current layout, then retry"
-                    .into(),
-            );
-        }
 
         let mut moves = std::collections::BTreeMap::new();
         for (key, v) in map {
             let Some(path) = sch.resolve_path(key) else {
-                return err(format!(
+                return Err(err(format!(
                     "no such instance: {key} (use paths like root.MODULE.R1.R or a refdes like R1)"
-                ));
+                )));
             };
             let (Some(x), Some(y)) = (
                 v.get("x").and_then(Value::as_f64),
                 v.get("y").and_then(Value::as_f64),
             ) else {
-                return err(format!("{key}: x and y are required numbers"));
+                return Err(err(format!("{key}: x and y are required numbers")));
             };
             moves.insert(
                 path.to_string(),
@@ -742,24 +877,590 @@ fn set_positions(state: &SharedState, args: &Value) -> (String, bool) {
                     x,
                     y,
                     rotation: v.get("rotation").and_then(Value::as_f64),
+                    rotate_by: None,
                 },
             );
         }
 
         let full = match zen_build::merge_positions(sch, &moves) {
             Ok(f) => f,
-            Err(e) => return err(format!("{e:#}")),
+            Err(e) => return Err(err(format!("{e:#}"))),
         };
-        if let Err(e) = zen_build::write_positions(source, &full) {
-            return err(format!("{e:#}"));
-        }
-        ok(json!({
+        Ok((source.clone(), hash.clone(), moves, full))
+    });
+    let (source, hash, moves, full) = match prep {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+
+    let result = state.gate().apply(
+        "set_positions",
+        &[source.clone()],
+        Some((&source, &hash)),
+        || zen_build::write_positions(&source, &full),
+    );
+    match result {
+        Ok(()) => ok(json!({
             "moved": moves.keys().collect::<Vec<_>>(),
             "written": full.len(),
             "hint": "Saved positions for every component (save-all). The canvas rebuilds \
                      automatically — re-run check_layout to verify the fix.",
-        }))
-    })
+        })),
+        Err(crate::gate::WriteError::Stale) => err(
+            "board source changed since the last build — call build first so moves merge \
+             against the current layout, then retry"
+                .into(),
+        ),
+        Err(crate::gate::WriteError::Failed(e)) => err(e),
+    }
+}
+
+/// The append-shaped structured writer (decision 0009 phase 1): program
+/// text + position snapshot in one gated write. Works on a red board too —
+/// the writer's name-anchored collision checks and re-parse are the guard;
+/// the position snapshot is simply skipped when the build is stale.
+fn add_instance_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(module), Some(name)) = (
+        args.get("module").and_then(Value::as_str),
+        args.get("name").and_then(Value::as_str),
+    ) else {
+        return err("add_instance needs `module` (the Module(\"…\") spec) and `name`".into());
+    };
+    let mut attrs: Vec<(String, String)> = Vec::new();
+    if let Some(map) = args.get("attrs").and_then(Value::as_object) {
+        for (k, v) in map {
+            let Some(v) = v.as_str() else {
+                return err(format!("attrs.{k}: values must be strings"));
+            };
+            attrs.push((k.clone(), v.to_string()));
+        }
+    }
+    let position = match (
+        args.get("x").and_then(Value::as_f64),
+        args.get("y").and_then(Value::as_f64),
+    ) {
+        (Some(x), Some(y)) => Some(zen_build::PlacedPosition {
+            x,
+            y,
+            rotation: args.get("rotation").and_then(Value::as_f64).unwrap_or(0.0),
+        }),
+        _ => None,
+    };
+
+    let (source, root, stdlib, sch, build_hash) = state.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
+            s.source_hash.clone(),
+        )
+    });
+    let Some(source) = source else {
+        return err("no board open".into());
+    };
+    let Some(root) = root else {
+        return err("no workspace open".into());
+    };
+    // A stale build can't be trusted for the save-all position snapshot;
+    // the program edit still applies (red-board fixes stay possible).
+    let build_current = build_hash.is_some()
+        && zen_build::content_hash(&source).ok() == build_hash;
+    let (sch, position, positions_skipped) = if build_current {
+        (sch, position, false)
+    } else {
+        let skipped = position.is_some();
+        (None, None, skipped)
+    };
+
+    let req = zen_build::AddInstanceRequest {
+        module: module.to_string(),
+        name: name.to_string(),
+        attrs,
+        position,
+    };
+    let mut out = None;
+    let write = state.gate().apply("add_instance", &[source.clone()], None, || {
+        out = Some(zen_build::add_instance(
+            &source,
+            &root,
+            &stdlib,
+            sch.as_ref(),
+            &req,
+        )?);
+        Ok(())
+    });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "inserted": res.inserted,
+                "line": res.line,
+                "binding": res.binding,
+                "position_key": res.position_key,
+                "placeholder_nets": res.placeholder_nets,
+                "positions_skipped": positions_skipped.then_some(
+                    "board changed since the last build — position not written; rebuild, then \
+                     place with set_positions/find_empty_space"
+                ),
+                "hint": "The canvas rebuilds automatically. On a hand-arranged board without \
+                         x/y, follow up with find_empty_space + set_positions so the layout \
+                         stays authored.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+/// Resolve a wiring endpoint (path or refdes + pin) to the anchor call
+/// site's file and local instance name via the build's editability map.
+/// Instances the build doesn't know yet (just placed, board still red)
+/// fall back to the top-level name in the entry file — the writers'
+/// name-anchored resolution validates against the CURRENT source.
+fn resolve_wire_endpoint(
+    sch: &zen_build::SchematicDoc,
+    editability: &zen_build::EditabilityDoc,
+    entry_file: &str,
+    key: &str,
+    pin: &str,
+) -> Result<(String, zen_build::PinEndpoint), String> {
+    // Only the provisional shapes fall back — `root.NAME` (a just-placed
+    // part on a red build) or a bare dotless name. Deeper unknown paths
+    // must NOT silently retarget an ancestor, and typo'd keys should read
+    // as "no such call", not edit something else.
+    let fallback = |k: &str| {
+        let top = match k.strip_prefix("root.") {
+            Some(rest) if !rest.is_empty() && !rest.contains('.') => rest,
+            None if !k.is_empty() && !k.contains('.') => k,
+            _ => return Err(format!("no such instance: {k}")),
+        };
+        Ok((
+            entry_file.to_string(),
+            zen_build::PinEndpoint {
+                instance: top.to_string(),
+                pin: pin.to_string(),
+            },
+        ))
+    };
+    let Some(path) = sch.resolve_path(key) else {
+        return fallback(key);
+    };
+    let Some(entry) = editability.instances.get(path) else {
+        return fallback(path);
+    };
+    let anchor = if entry.editable {
+        path.to_string()
+    } else {
+        entry.anchor.clone().ok_or_else(|| {
+            entry
+                .reason
+                .clone()
+                .unwrap_or_else(|| format!("{path} is not editable"))
+        })?
+    };
+    let file = editability
+        .instances
+        .get(&anchor)
+        .and_then(|a| a.file.clone())
+        .ok_or_else(|| format!("no source file resolved for {anchor}"))?;
+    let instance = anchor
+        .rsplit('.')
+        .next()
+        .ok_or_else(|| format!("bad anchor path {anchor}"))?
+        .to_string();
+    Ok((
+        file,
+        zen_build::PinEndpoint {
+            instance,
+            pin: pin.to_string(),
+        },
+    ))
+}
+
+fn connect_pins_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let endpoint = |v: Option<&Value>| -> Option<(String, String)> {
+        let v = v?;
+        Some((
+            v.get("instance")?.as_str()?.to_string(),
+            v.get("pin")?.as_str()?.to_string(),
+        ))
+    };
+    let (Some((a_key, a_pin)), Some((b_key, b_pin))) =
+        (endpoint(args.get("a")), endpoint(args.get("b")))
+    else {
+        return err("connect_pins needs a and b, each {instance, pin}".into());
+    };
+    let net = args.get("net").and_then(Value::as_str).map(str::to_string);
+    let allow_merge = args
+        .get("allow_merge")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let (root, stdlib, source, resolved, sch, entry_rel, build_current) = state.read(|s| {
+        let build_current = s.source_hash.is_some()
+            && s.source
+                .as_deref()
+                .and_then(|p| zen_build::content_hash(p).ok())
+                == s.source_hash;
+        let resolved = s
+            .build
+            .as_ref()
+            .and_then(|b| b.schematic.as_ref().zip(b.editability.as_ref()).map(|(sch, ed)| (sch, ed, b.source.as_str())))
+            .map(|(sch, ed, entry)| {
+                let a = resolve_wire_endpoint(sch, ed, entry, &a_key, &a_pin)?;
+                let b = resolve_wire_endpoint(sch, ed, entry, &b_key, &b_pin)?;
+                Ok::<_, String>((a, b))
+            });
+        (
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.source.clone(),
+            resolved,
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
+            s.build.as_ref().map(|b| b.source.clone()),
+            build_current,
+        )
+    });
+    let Some(root) = root else {
+        return err("no board open".into());
+    };
+    let ((mut a_file, mut a_ep), (mut b_file, mut b_ep)) = match resolved {
+        Some(Ok(pair)) => pair,
+        Some(Err(e)) => return err(e),
+        None => return err("no build available yet — open a board or call build first".into()),
+    };
+    // Cross-module endpoints resolve through the module's PORT when the
+    // inner pin's net is exposed on one (same behavior as the canvas).
+    let mut via_ports: Vec<String> = Vec::new();
+    if a_file != b_file {
+        if let (Some(entry_rel), Some(source), Some(sch)) = (&entry_rel, &source, &sch) {
+            for (file, ep, key, pin) in [
+                (&mut a_file, &mut a_ep, &a_key, &a_pin),
+                (&mut b_file, &mut b_ep, &b_key, &b_pin),
+            ] {
+                if file == entry_rel {
+                    continue;
+                }
+                let path = sch.resolve_path(key).unwrap_or(key).to_string();
+                if let Ok(Some(t)) =
+                    zen_build::translate_endpoint_via_port(sch, source, &root, &path, pin)
+                {
+                    via_ports.push(format!("{}.{}", t.instance, t.pin));
+                    *file = entry_rel.clone();
+                    *ep = t;
+                }
+            }
+        }
+        if a_file != b_file {
+            return err(format!(
+                "the endpoints live in different module scopes ({a_file} vs {b_file}) and \
+                 the inner pin's net is not exposed as a port — expose it with an io() on \
+                 the module, or wire inside the module"
+            ));
+        }
+    }
+    let target = root.join(&a_file);
+    let req = zen_build::ConnectPinsRequest {
+        a: a_ep,
+        b: b_ep,
+        net,
+        allow_merge,
+    };
+    let sch = if build_current { sch } else { None };
+    let mut out = None;
+    let write = state.gate().apply("connect_pins", &[target.clone()], None, || {
+        out = Some(zen_build::connect_pins(
+            &target,
+            &root,
+            &stdlib,
+            sch.as_ref(),
+            &req,
+        )?);
+        Ok(())
+    });
+    match write {
+        Ok(()) => {
+            let outcome = out.expect("write ran");
+            let mut payload = serde_json::to_value(&outcome).unwrap_or_default();
+            if matches!(outcome, zen_build::ConnectOutcome::NeedsMerge { .. }) {
+                payload["hint"] = json!(
+                    "Nothing was written. Confirm the merge with the user, then call \
+                     connect_pins again with allow_merge: true."
+                );
+            }
+            if let Some(port) = via_ports.first() {
+                payload["via_port"] = json!(port);
+            }
+            ok(payload)
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn disconnect_pin_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(key), Some(pin)) = (
+        args.get("instance").and_then(Value::as_str),
+        args.get("pin").and_then(Value::as_str),
+    ) else {
+        return err("disconnect_pin needs `instance` (path or refdes) and `pin`".into());
+    };
+    let (root, stdlib, resolved) = state.read(|s| {
+        (
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.build
+                .as_ref()
+                .and_then(|b| b.schematic.as_ref().zip(b.editability.as_ref()).map(|(sch, ed)| (sch, ed, b.source.as_str())))
+                .map(|(sch, ed, entry)| resolve_wire_endpoint(sch, ed, entry, key, pin)),
+        )
+    });
+    let Some(root) = root else {
+        return err("no board open".into());
+    };
+    let (file, ep) = match resolved {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return err(e),
+        None => return err("no build available yet — open a board or call build first".into()),
+    };
+    let target = root.join(&file);
+    let mut out = None;
+    let write = state
+        .gate()
+        .apply("disconnect_pin", &[target.clone()], None, || {
+            out = Some(zen_build::disconnect_pin(
+                &target,
+                &root,
+                &stdlib,
+                &ep.instance,
+                &ep.pin,
+            )?);
+            Ok(())
+        });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "io": res.io,
+                "placeholder": res.placeholder,
+                "pruned_defs": res.pruned_defs,
+                "hint": "The canvas rebuilds automatically — query_nets confirms the detach.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn set_attribute_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(key_arg), Some(attr), Some(value)) = (
+        args.get("instance").and_then(Value::as_str),
+        args.get("key").and_then(Value::as_str),
+        args.get("value").and_then(Value::as_str),
+    ) else {
+        return err("set_attribute needs `instance`, `key`, and `value`".into());
+    };
+    let (root, stdlib, resolved) = state.read(|s| {
+        (
+            s.workspace_root.clone(),
+            s.stdlib_dir.clone().unwrap_or_default(),
+            s.build
+                .as_ref()
+                .and_then(|b| b.schematic.as_ref().zip(b.editability.as_ref()).map(|(sch, ed)| (sch, ed, b.source.as_str())))
+                .map(|(sch, ed, entry)| resolve_wire_endpoint(sch, ed, entry, key_arg, "")),
+        )
+    });
+    let Some(root) = root else {
+        return err("no board open".into());
+    };
+    let (file, ep) = match resolved {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return err(e),
+        None => return err("no build available yet — open a board or call build first".into()),
+    };
+    let target = root.join(&file);
+    let mut out = None;
+    let write = state
+        .gate()
+        .apply("set_attribute", &[target.clone()], None, || {
+            out = Some(zen_build::set_attribute(
+                &target,
+                &root,
+                &stdlib,
+                &ep.instance,
+                attr,
+                value,
+            )?);
+            Ok(())
+        });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "instance": ep.instance,
+                "key": attr,
+                "value": value,
+                "replaced": res.replaced,
+                "hint": "The canvas rebuilds automatically.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn remove_instance_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let Some(key_arg) = args.get("instance").and_then(Value::as_str) else {
+        return err("remove_instance needs `instance` (path or refdes)".into());
+    };
+    let (root, resolved) = state.read(|s| {
+        (
+            s.workspace_root.clone(),
+            s.build
+                .as_ref()
+                .and_then(|b| b.schematic.as_ref().zip(b.editability.as_ref()).map(|(sch, ed)| (sch, ed, b.source.as_str())))
+                .map(|(sch, ed, entry)| resolve_wire_endpoint(sch, ed, entry, key_arg, "")),
+        )
+    });
+    let Some(root) = root else {
+        return err("no board open".into());
+    };
+    let (file, ep) = match resolved {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => return err(e),
+        None => return err("no build available yet — open a board or call build first".into()),
+    };
+    let target = root.join(&file);
+    let mut out = None;
+    let write = state
+        .gate()
+        .apply("remove_instance", &[target.clone()], None, || {
+            out = Some(zen_build::remove_instances(
+                &target,
+                &root,
+                &[ep.instance.clone()],
+            )?);
+            Ok(())
+        });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "removed": res.removed,
+                "pruned_nets": res.pruned_nets,
+                "pruned_bindings": res.pruned_bindings,
+                "removed_positions": res.removed_positions,
+                "hint": "The canvas rebuilds automatically — instance paths referencing it are gone.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn create_net_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(name), Some(kind)) = (
+        args.get("name").and_then(Value::as_str),
+        args.get("kind").and_then(Value::as_str),
+    ) else {
+        return err("create_net needs `name` and `kind` (Net | Power | Ground)".into());
+    };
+    let (source, root) = state.read(|s| (s.source.clone(), s.workspace_root.clone()));
+    let (Some(source), Some(root)) = (source, root) else {
+        return err("no board open".into());
+    };
+    let mut out = None;
+    let write = state.gate().apply("create_net", &[source.clone()], None, || {
+        out = Some(zen_build::create_net(&source, &root, name, kind)?);
+        Ok(())
+    });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "variable": res.variable,
+                "line": res.line,
+                "hint": "Bind pins with connect_pins (pin to pin) — the shared net is picked \
+                         or created there; create_net is for declaring rails up front.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn rename_net_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(from), Some(to)) = (
+        args.get("from").and_then(Value::as_str),
+        args.get("to").and_then(Value::as_str),
+    ) else {
+        return err("rename_net needs `from` and `to`".into());
+    };
+    // The defining file comes from the build's editability map (a net can
+    // live in a submodule file); default to the board entry.
+    let (source, root, def_file) = state.read(|s| {
+        (
+            s.source.clone(),
+            s.workspace_root.clone(),
+            s.build
+                .as_ref()
+                .and_then(|b| b.editability.as_ref())
+                .and_then(|e| e.nets.get(from))
+                .and_then(|n| n.file.clone()),
+        )
+    });
+    let (Some(source), Some(root)) = (source, root) else {
+        return err("no board open".into());
+    };
+    let target = def_file.map(|f| root.join(f)).unwrap_or(source);
+    let mut out = None;
+    let write = state.gate().apply("rename_net", &[target.clone()], None, || {
+        out = Some(zen_build::rename_net(&target, &root, from, to)?);
+        Ok(())
+    });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "renamed": {"from": from, "to": to},
+                "variable": res.variable,
+                "references": res.references,
+                "migrated_positions": res.migrated_positions,
+                "hint": "Net names changed everywhere — re-run query_nets before referencing.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
+}
+
+fn rename_instance_tool(state: &SharedState, args: &Value) -> (String, bool) {
+    let (Some(from), Some(to)) = (
+        args.get("from").and_then(Value::as_str),
+        args.get("to").and_then(Value::as_str),
+    ) else {
+        return err("rename_instance needs `from` and `to`".into());
+    };
+    let (source, root) = state.read(|s| (s.source.clone(), s.workspace_root.clone()));
+    let Some(source) = source else {
+        return err("no board open".into());
+    };
+    let Some(root) = root else {
+        return err("no workspace open".into());
+    };
+    let mut out = None;
+    let write = state
+        .gate()
+        .apply("rename_instance", &[source.clone()], None, || {
+            out = Some(zen_build::rename_instance(&source, &root, from, to)?);
+            Ok(())
+        });
+    match write {
+        Ok(()) => {
+            let res = out.expect("write ran");
+            ok(json!({
+                "renamed": {"from": from, "to": to},
+                "migrated_positions": res.migrated_positions,
+                "hint": "Instance paths changed with the name — re-run get_schematic or \
+                         get_selection before referencing the instance again.",
+            }))
+        }
+        Err(e) => err(e.to_string()),
+    }
 }
 
 fn with_build(
@@ -1019,6 +1720,13 @@ fn get_instance(
         })
         .collect();
 
+    // Editability (decision 0009): whether structured writers may target
+    // this instance's creating call, and where edits anchor when not.
+    let editability = build
+        .editability
+        .as_ref()
+        .and_then(|e| e.instances.get(path));
+
     ok(json!({
         "path": inst.path,
         "kind": inst.kind,
@@ -1029,6 +1737,7 @@ fn get_instance(
         "children": inst.children,
         "pins": pin_detail,
         "part": part,
+        "editability": editability,
     }))
 }
 

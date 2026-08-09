@@ -752,6 +752,7 @@ mod tests {
                 by_refdes: BTreeMap::new(),
             }),
             diagnostics: vec![],
+            editability: None,
         }
     }
 

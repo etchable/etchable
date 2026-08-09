@@ -641,6 +641,7 @@ mod tests {
             source: "top.zen".into(),
             schematic: Some(sch),
             diagnostics: vec![],
+            editability: None,
         };
         let report = check_layout(out.schematic.as_ref().unwrap(), None);
         assert_eq!(report.components, 1);

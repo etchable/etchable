@@ -235,16 +235,50 @@ function CanvasRepro() {
       .then(setDoc)
       .catch((e) => console.error("fixture load failed", e));
   }, [fixtureUrl]);
+  // A fake-but-shaped editability map + hash so selection-driven gestures
+  // (Delete, R) exercise in the browser harness too.
+  const fixtureEditability = React.useMemo(
+    () => ({
+      instances: Object.fromEntries(
+        [...new Set(Object.values(doc.id_map))]
+          .filter((p) => p.startsWith("root."))
+          .map((p) => [p, { editable: true }]),
+      ),
+      nets: {},
+    }),
+    [doc],
+  );
   const view: BuildView = {
-    version: 3,
+    version: 4,
     source: fixtureUrl ?? "examples/demo/board.zen",
     schematic: null,
     diagnostics: [],
     circuit_json: doc.elements,
     id_map: doc.id_map,
-    source_hash: null,
+    source_hash: "fixture-hash",
+    editability: fixtureEditability,
   };
   const [selection, setSelection] = React.useState<string[]>([]);
+  // ?state=canvas&place=1 arms a fake resistor placement (ghost + drop
+  // form); &label=1 arms the GND label tool — console.log commits, no
+  // Tauri backend in the repro page.
+  const [placement, setPlacement] = React.useState(() =>
+    new URLSearchParams(window.location.search).get("place")
+      ? {
+          spec: "@stdlib/generics/Resistor.zen",
+          label: "Resistor",
+          prefix: "R",
+          needsValue: true,
+        }
+      : null,
+  );
+  const [labelMode, setLabelMode] = React.useState<
+    import("./types").LabelArm | null
+  >(() =>
+    new URLSearchParams(window.location.search).get("label")
+      ? { kind: "Ground", defaultName: "GND", label: "GND" }
+      : null,
+  );
   return (
     <CircuitCanvas
       view={view}
@@ -254,6 +288,73 @@ function CanvasRepro() {
       selection={selection}
       onSelectionChange={setSelection}
       onSavePositions={(p) => console.log("savePositions", p)}
+      placement={placement}
+      onPlacementCommit={async (name, attrs, pos) => {
+        console.log("addInstance", name, attrs, pos);
+      }}
+      onPlacementFinish={() => setPlacement(null)}
+      labelMode={labelMode}
+      onLabelFinish={() => setLabelMode(null)}
+      onAttachPin={async (path, pin, netName, kind) => {
+        console.log("attachPinNet", path, pin, netName, kind);
+      }}
+      onRenameNet={async (from, to) => {
+        console.log("renameNet", from, to);
+      }}
+      onSetAttribute={async (path, key, value) => {
+        console.log("setAttribute", path, key, value);
+      }}
+      onRenameInstance={async (from, to) => {
+        console.log("renameInstance", from, to);
+      }}
+      onRemoveInstances={async (paths) => {
+        console.log("removeInstances", paths);
+      }}
+      onAskAgent={(text) => console.log("askAgent", text)}
+      latestHash="fixture-hash"
+      provisionals={
+        // ?state=canvas&prov=1 renders a fake pending part (dashed
+        // stand-in with clickable pins) for visual/interaction smoke.
+        new URLSearchParams(window.location.search).get("prov")
+          ? [
+              {
+                name: "NT1",
+                label: "NetTie",
+                pins: ["P1", "P2"],
+                x: -3,
+                y: -2,
+                rotation: 0,
+                positionPath: "root.NT1.NT",
+              },
+            ]
+          : []
+      }
+      onProvisionalMoved={(name, x, y) => console.log("provMoved", name, x, y)}
+      onUndo={async () => {
+        console.log("undo");
+        return "move";
+      }}
+      onRedo={async () => {
+        console.log("redo");
+        return "move";
+      }}
+      onConnectPins={async (a, b, allowMerge) => {
+        console.log("connectPins", a, b, allowMerge);
+        // Exercise the merge-confirm card on the first attempt.
+        if (!allowMerge) {
+          return { outcome: "needs_merge", from: "NET_B", into: "NET_A", from_refs: 3 };
+        }
+        return {
+          outcome: "applied",
+          net: "NET_A",
+          variable: "NET_A",
+          created_def: false,
+          already: false,
+          merged_from: "NET_B",
+          moved_refs: 3,
+          pruned_defs: ["NET_B"],
+        };
+      }}
     />
   );
 }

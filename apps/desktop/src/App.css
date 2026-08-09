@@ -159,3 +159,49 @@ body {
     radial-gradient(circle, var(--color-grid) 1.5px, transparent 1.5px) 0 0 / 26px 26px,
     var(--color-canvas);
 }
+
+/* Gesture-overlay pins (decision 0009 §7, UX review): each pin is a large
+   invisible hit circle plus a smaller visible ring. The ring rests as a
+   faint dot while the pointer is over the pin's component (wiring has a
+   visible origin), and lights sky on direct hover. Radii are set per frame
+   by GestureOverlay so screen size stays constant across zoom. Generated
+   pins (no structured edit can reach them, even via an anchor) grey out. */
+.pin-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  cursor: crosshair;
+}
+.pin-vis {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  transition: fill 120ms ease-out, stroke 120ms ease-out;
+}
+g[data-resting] .pin-vis {
+  fill: rgba(35, 43, 63, 0.22);
+}
+.pin-hit:hover + .pin-vis {
+  fill: color-mix(in srgb, var(--color-sky) 25%, transparent);
+  stroke: var(--color-sky);
+}
+g[data-generated] .pin-hit {
+  cursor: default;
+}
+g[data-generated][data-resting] .pin-vis {
+  fill: rgba(108, 115, 133, 0.16);
+}
+g[data-generated] .pin-hit:hover + .pin-vis {
+  fill: rgba(108, 115, 133, 0.18);
+  stroke: #6c7385;
+}
+
+/* The drag-to-wire preview line (screen space, GestureOverlay). */
+.wire-preview {
+  stroke: #c1783c;
+  stroke-width: 2px;
+  stroke-dasharray: 6 4;
+  stroke-linecap: round;
+}

@@ -677,7 +677,9 @@ pub fn scaffold_project_detailed(parent: &Path, name: &str) -> Result<ScaffoldRe
              Board(name=\"{name}\", layers=2, layout_path=\"layout/{name}\")\n"
         ),
     )?;
-    std::fs::write(root.join(".gitignore"), ".pcb/\n")?;
+    // .etchable-probe.zen is the placement preflight's transient scratch;
+    // it self-deletes, but a crash mid-probe must not dirty the repo.
+    std::fs::write(root.join(".gitignore"), ".pcb/\n.etchable-probe.zen\n")?;
     for dir in ["components", "datasheets", "layout"] {
         let d = root.join(dir);
         std::fs::create_dir_all(&d)?;

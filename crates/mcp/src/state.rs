@@ -44,6 +44,9 @@ pub type RebuildRequest = oneshot::Sender<Result<BuildSummary, String>>;
 pub struct SharedState {
     inner: Arc<RwLock<CanvasState>>,
     rebuild_tx: mpsc::Sender<RebuildRequest>,
+    /// Serializes every structured source write (canvas command or MCP
+    /// tool) for this window — see `crate::gate`.
+    gate: crate::gate::WriteGate,
 }
 
 impl SharedState {
@@ -51,7 +54,14 @@ impl SharedState {
         Self {
             inner: Arc::new(RwLock::new(CanvasState::default())),
             rebuild_tx,
+            gate: crate::gate::WriteGate::default(),
         }
+    }
+
+    /// The window's write gate. All source writers go through it — never
+    /// write project files directly.
+    pub fn gate(&self) -> &crate::gate::WriteGate {
+        &self.gate
     }
 
     pub fn read<R>(&self, f: impl FnOnce(&CanvasState) -> R) -> R {

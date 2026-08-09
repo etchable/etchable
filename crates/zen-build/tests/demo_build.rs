@@ -58,6 +58,7 @@ fn builds_demo_board() {
         source: again.source.clone(),
         schematic: Some(sch),
         diagnostics: vec![],
+        editability: None,
     };
     let doc = zen_build::to_circuit_json(&out);
     let doc2 = zen_build::to_circuit_json(&out);

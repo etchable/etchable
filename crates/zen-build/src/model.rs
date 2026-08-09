@@ -23,6 +23,10 @@ pub struct BuildOutput {
     /// `None` when evaluation failed before producing a netlist.
     pub schematic: Option<SchematicDoc>,
     pub diagnostics: Vec<Diag>,
+    /// Which instances/nets structured writers may target (decision 0009).
+    /// `None` when there is no schematic to classify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editability: Option<crate::edit::EditabilityDoc>,
 }
 
 impl BuildOutput {
