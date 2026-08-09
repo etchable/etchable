@@ -1,20 +1,20 @@
 //! Tauri commands — the webview's API surface.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
+use tokio::sync::mpsc;
 use zen_build::BuildSummary;
 
-use crate::state::{BuildRequest, BuildView, SharedAppState, UiStateSnapshot};
+use crate::state::{AppState, BuildRequest, BuildView, Registry, SharedAppState, UiStateSnapshot};
 use crate::{agent, builder};
 
 type CmdResult<T> = Result<T, String>;
 
-/// Bring the app (workbench) window forward and tuck the dashboard away.
-/// Windows are only ever hidden, never destroyed — the app window's webview
-/// holds live UI state (the chat transcript) that a re-create would lose.
-pub fn show_app_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("app") {
+/// Bring one project window forward and tuck the dashboard away.
+fn show_project_window(app: &AppHandle, label: &str) {
+    if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
         let _ = w.set_focus();
     }
@@ -23,7 +23,7 @@ pub fn show_app_window(app: &AppHandle) {
     }
 }
 
-/// Bring the dashboard window forward (the app window, if visible, stays).
+/// Bring the dashboard window forward (project windows stay).
 #[tauri::command]
 pub fn show_dashboard(app: AppHandle) -> CmdResult<()> {
     let w = app
@@ -34,36 +34,154 @@ pub fn show_dashboard(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
-/// Shared tail of every open flow: point the canvas at a board file, build,
-/// then watch from the resolved workspace root. On success the app window
-/// takes over from the dashboard.
+/// Stand up a fresh project instance: its own builder task and MCP server,
+/// registered under a fresh `app-N` label. The window itself is created
+/// later, after the first build succeeds.
+async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedAppState, String> {
+    let label = registry.next_label();
+    let (build_tx, build_rx) = mpsc::channel::<BuildRequest>(16);
+    let (rebuild_tx, rebuild_rx) = mpsc::channel::<mcp::RebuildRequest>(16);
+
+    let state: SharedAppState = Arc::new(AppState {
+        window_label: label.clone(),
+        canvas: mcp::SharedState::new(rebuild_tx),
+        build_tx,
+        agent: tokio::sync::Mutex::new(None),
+        mcp_config_path: std::sync::OnceLock::new(),
+        mcp_server: std::sync::OnceLock::new(),
+        stdlib_source: std::sync::OnceLock::new(),
+        watcher: std::sync::Mutex::new(None),
+    });
+    if let Some(stdlib) = registry.stdlib_source.get() {
+        let _ = state.stdlib_source.set(stdlib.clone());
+    }
+
+    builder::spawn_builder(app.clone(), state.clone(), build_rx, rebuild_rx);
+
+    // Per-instance MCP server + config file — the agent for this window
+    // must see this window's canvas, not a global one.
+    let (addr, server) = mcp::serve(state.canvas.clone())
+        .await
+        .map_err(|e| format!("mcp server failed to start: {e:#}"))?;
+    tracing::info!("mcp server for {label} on http://{addr}/mcp");
+    let _ = state.mcp_server.set(server);
+    let config_dir = registry
+        .config_dir
+        .get()
+        .cloned()
+        .unwrap_or_else(std::env::temp_dir);
+    std::fs::create_dir_all(&config_dir).map_err(|e| format!("cannot create config dir: {e}"))?;
+    let config_path = config_dir.join(format!("mcp-config-{label}.json"));
+    std::fs::write(&config_path, mcp::mcp_config_json(addr).to_string())
+        .map_err(|e| format!("cannot write mcp config: {e}"))?;
+    let _ = state.mcp_config_path.set(config_path);
+
+    registry.insert(state.clone());
+    Ok(state)
+}
+
+/// Undo `create_instance`: abort the MCP server, kill the agent, drop the
+/// watcher and builder (their channels close with the state). Called when a
+/// project window is destroyed, and when an open flow fails half-way.
+pub fn teardown_instance(registry: &Registry, label: &str) {
+    let Some(state) = registry.remove(label) else {
+        return;
+    };
+    if let Some(server) = state.mcp_server.get() {
+        server.abort();
+    }
+    if let Some(path) = state.mcp_config_path.get() {
+        let _ = std::fs::remove_file(path);
+    }
+    tauri::async_runtime::spawn(async move {
+        let mut guard = state.agent.lock().await;
+        if let Some(session) = guard.take() {
+            let _ = session.kill().await;
+        }
+    });
+}
+
+/// Shared tail of every open flow: spin up a project instance for the board,
+/// build, watch, then open a new project window for it (replacing the
+/// dashboard on screen). A board that's already open focuses its existing
+/// window instead — no duplicate watchers or agents on one file.
 pub async fn open_board_file(
     app: &AppHandle,
-    state: &SharedAppState,
+    registry: &Registry,
     entry: PathBuf,
     project: Option<zen_build::ProjectDoc>,
 ) -> Result<BuildSummary, String> {
+    if let Some(existing) = registry.find_by_source(&entry) {
+        show_project_window(app, &existing.window_label);
+        // Re-opening doubles as a refresh.
+        return existing.request_build_and_wait().await;
+    }
+
+    let state = create_instance(app, registry).await?;
+    let label = state.window_label.clone();
     state.canvas.write(|s| {
         s.source = Some(entry);
         s.selection = Default::default();
         s.project = project;
     });
 
-    let summary = state.request_build_and_wait().await?;
-
-    // Watch from the resolved workspace root (set by the builder on open).
-    if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
-        builder::start_watcher(state, &root).map_err(|e| e.to_string())?;
+    let opened: Result<BuildSummary, String> = async {
+        let summary = state.request_build_and_wait().await?;
+        // Watch from the resolved workspace root (set by the builder on open).
+        if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
+            builder::start_watcher(&state, &root).map_err(|e| e.to_string())?;
+        }
+        Ok(summary)
     }
-    show_app_window(app);
+    .await;
+
+    let summary = match opened {
+        Ok(s) => s,
+        Err(e) => {
+            teardown_instance(registry, &label);
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = create_project_window(app, &label) {
+        teardown_instance(registry, &label);
+        return Err(e);
+    }
+    show_project_window(app, &label);
     Ok(summary)
+}
+
+/// A project window, cloned from the dashboard's chrome (overlay titlebar,
+/// floating traffic lights) but pointed at the workbench page.
+fn create_project_window(app: &AppHandle, label: &str) -> Result<(), String> {
+    let config = tauri::utils::config::WindowConfig {
+        label: label.to_string(),
+        url: tauri::WebviewUrl::App("app.html".into()),
+        title: "etchable".into(),
+        width: 1400.0,
+        height: 900.0,
+        hidden_title: true,
+        ..Default::default()
+    };
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .traffic_light_position(tauri::LogicalPosition::new(15.0, 24.0));
+    }
+    builder
+        .build()
+        .map_err(|e| format!("cannot create project window: {e}"))?;
+    Ok(())
 }
 
 /// Open a bare .zen board (advanced/dev path — no project attached).
 #[tauri::command]
 pub async fn select_board(
     app: AppHandle,
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
     path: String,
 ) -> CmdResult<BuildSummary> {
     let path = PathBuf::from(path);
@@ -71,7 +189,7 @@ pub async fn select_board(
         return Err(format!("not a .zen file: {}", path.display()));
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-    open_board_file(&app, &state, path, None).await
+    open_board_file(&app, &registry, path, None).await
 }
 
 /// Open an etchable project directory (the primary flow): requires
@@ -79,7 +197,7 @@ pub async fn select_board(
 #[tauri::command]
 pub async fn open_project(
     app: AppHandle,
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
     path: String,
 ) -> CmdResult<BuildSummary> {
     let dir = PathBuf::from(path);
@@ -106,14 +224,14 @@ pub async fn open_project(
     if !entry.is_file() || entry.extension().is_none_or(|e| e != "zen") {
         return Err(format!("board entry is not a .zen file: {}", entry.display()));
     }
-    open_board_file(&app, &state, entry, Some(doc)).await
+    open_board_file(&app, &registry, entry, Some(doc)).await
 }
 
 /// Scaffold a fresh project and open it.
 #[tauri::command]
 pub async fn create_project(
     app: AppHandle,
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
     parent: String,
     name: String,
 ) -> CmdResult<BuildSummary> {
@@ -130,12 +248,24 @@ pub async fn create_project(
     if !result.git_initialized {
         tracing::warn!("scaffolded {} without a git repo", result.root.display());
     }
-    open_project(app, state, result.root.display().to_string()).await
+    open_project(app, registry, result.root.display().to_string()).await
+}
+
+/// The instance behind the calling window — every per-project command
+/// resolves through this, so each window only ever sees its own project.
+fn instance(registry: &Registry, window: &tauri::WebviewWindow) -> CmdResult<SharedAppState> {
+    registry
+        .get(window.label())
+        .ok_or_else(|| format!("no project open in window {}", window.label()))
 }
 
 /// Snapshot for (re)mounting UIs.
 #[tauri::command]
-pub async fn get_state(state: State<'_, SharedAppState>) -> CmdResult<UiStateSnapshot> {
+pub async fn get_state(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<UiStateSnapshot> {
+    let state = instance(&registry, &window)?;
     let agent_running = state.agent.lock().await.is_some();
     Ok(state.canvas.read(|s| UiStateSnapshot {
         workspace_root: s.workspace_root.as_ref().map(|p| p.display().to_string()),
@@ -166,10 +296,12 @@ pub struct PositionIn {
 /// file since, and the stale edit is rejected.
 #[tauri::command]
 pub fn save_positions(
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
     positions: std::collections::BTreeMap<String, PositionIn>,
     base_hash: String,
 ) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     let Some(source) = state.canvas.read(|s| s.source.clone()) else {
         return Err("no board open".into());
     };
@@ -204,10 +336,12 @@ pub fn save_positions(
 /// Canvas selection changed. Paths are instance paths and/or net names.
 #[tauri::command]
 pub fn set_selection(
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
     paths: Vec<String>,
     note: Option<String>,
 ) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     state.canvas.set_selection(mcp::Selection { paths, note });
     Ok(())
 }
@@ -217,9 +351,11 @@ pub fn set_selection(
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
     text: String,
 ) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     agent::ensure_session(&app, &state, None)
         .await
         .map_err(|e| format!("{e:#}"))?;
@@ -235,11 +371,13 @@ pub async fn send_message(
 /// Answer an inline permission prompt.
 #[tauri::command]
 pub async fn respond_permission(
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
     request_id: String,
     allow: bool,
     message: Option<String>,
 ) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     let guard = state.agent.lock().await;
     let session = guard.as_ref().ok_or("agent not running")?;
     session
@@ -250,7 +388,11 @@ pub async fn respond_permission(
 
 /// Best-effort interrupt of the in-flight turn.
 #[tauri::command]
-pub async fn interrupt_agent(state: State<'_, SharedAppState>) -> CmdResult<()> {
+pub async fn interrupt_agent(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     let guard = state.agent.lock().await;
     let session = guard.as_ref().ok_or("agent not running")?;
     session.interrupt().await.map_err(|e| format!("{e:#}"))
@@ -258,7 +400,11 @@ pub async fn interrupt_agent(state: State<'_, SharedAppState>) -> CmdResult<()> 
 
 /// Kill the current session; the next send_message starts a fresh one.
 #[tauri::command]
-pub async fn new_session(state: State<'_, SharedAppState>) -> CmdResult<()> {
+pub async fn new_session(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     let mut guard = state.agent.lock().await;
     if let Some(session) = guard.take() {
         let _ = session.kill().await;
@@ -270,9 +416,11 @@ pub async fn new_session(state: State<'_, SharedAppState>) -> CmdResult<()> {
 #[tauri::command]
 pub async fn resume_session(
     app: AppHandle,
-    state: State<'_, SharedAppState>,
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
     session_id: String,
 ) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     {
         let mut guard = state.agent.lock().await;
         if let Some(session) = guard.take() {
@@ -286,13 +434,21 @@ pub async fn resume_session(
 
 /// Force a rebuild (the UI's refresh button).
 #[tauri::command]
-pub async fn rebuild(state: State<'_, SharedAppState>) -> CmdResult<BuildSummary> {
+pub async fn rebuild(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<BuildSummary> {
+    let state = instance(&registry, &window)?;
     state.request_build_and_wait().await
 }
 
 /// Reload dependencies too (pcb.toml edits outside the watcher's view).
 #[tauri::command]
-pub async fn reload_workspace(state: State<'_, SharedAppState>) -> CmdResult<()> {
+pub async fn reload_workspace(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<()> {
+    let state = instance(&registry, &window)?;
     state
         .build_tx
         .send(BuildRequest {

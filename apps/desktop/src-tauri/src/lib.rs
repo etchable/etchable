@@ -3,12 +3,9 @@ mod builder;
 mod commands;
 mod state;
 
-use std::sync::Arc;
-
 use tauri::Manager;
-use tokio::sync::mpsc;
 
-use state::AppState;
+use state::Registry;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,57 +16,50 @@ pub fn run() {
         )
         .init();
 
-    let (build_tx, build_rx) = mpsc::channel::<state::BuildRequest>(16);
-    let (rebuild_tx, rebuild_rx) = mpsc::channel::<mcp::RebuildRequest>(16);
-
-    let app_state: state::SharedAppState = Arc::new(AppState {
-        canvas: mcp::SharedState::new(rebuild_tx),
-        build_tx,
-        agent: tokio::sync::Mutex::new(None),
-        mcp_config_path: std::sync::OnceLock::new(),
-        stdlib_source: std::sync::OnceLock::new(),
-        watcher: std::sync::Mutex::new(None),
-    });
-
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(app_state.clone())
-        // Windows hide instead of closing (the app window's webview holds the
-        // chat transcript; destroying it would lose the conversation view).
-        // Closing the last visible window quits.
+        .manage(Registry::default())
+        // Project windows are documents: closing one tears its instance down
+        // (agent, builder, watcher, MCP server). The dashboard only hides —
+        // unless it's the last visible window, which quits.
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let app = window.app_handle();
-                match window.label() {
-                    "app" => {
+            let app = window.app_handle();
+            let registry = app.state::<Registry>();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. }
+                    if window.label() == "dashboard" =>
+                {
+                    let any_project_visible = app
+                        .webview_windows()
+                        .values()
+                        .any(|w| w.label() != "dashboard" && w.is_visible().unwrap_or(false));
+                    if any_project_visible {
                         api.prevent_close();
                         let _ = window.hide();
+                    } else {
+                        app.exit(0);
+                    }
+                }
+                tauri::WindowEvent::Destroyed if window.label() != "dashboard" => {
+                    commands::teardown_instance(&registry, window.label());
+                    // Last project window gone: come back to the dashboard
+                    // (unless the whole app is quitting).
+                    if registry.is_empty()
+                        && !registry.exiting.load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         if let Some(dash) = app.get_webview_window("dashboard") {
                             let _ = dash.show();
                             let _ = dash.set_focus();
                         }
                     }
-                    "dashboard" => {
-                        let app_visible = app
-                            .get_webview_window("app")
-                            .and_then(|w| w.is_visible().ok())
-                            .unwrap_or(false);
-                        if app_visible {
-                            api.prevent_close();
-                            let _ = window.hide();
-                        } else {
-                            // Last visible window: a destroyed dashboard plus
-                            // a hidden app window would leave a zombie process.
-                            app.exit(0);
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            let registry = app.state::<Registry>();
 
             // Packaged apps carry the stdlib in Resources/stdlib (see
             // bundle.resources); exe-ancestor discovery can never find
@@ -79,17 +69,20 @@ pub fn run() {
                 let bundled = dir.join("stdlib");
                 if bundled.join("pcb.toml").is_file() {
                     tracing::info!("using bundled stdlib at {}", bundled.display());
-                    let _ = app_state.stdlib_source.set(bundled);
+                    let _ = registry.stdlib_source.set(bundled);
                 }
             }
 
-            builder::spawn_builder(handle.clone(), app_state.clone(), build_rx, rebuild_rx);
+            // Per-instance mcp-config files land here (see create_instance).
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let _ = registry.config_dir.set(config_dir);
 
             // Dev nicety: ETCHABLE_OPEN=<board.zen or project dir> opens at
             // startup (relative to the invocation cwd).
             if let Ok(target) = std::env::var("ETCHABLE_OPEN") {
-                let state = app_state.clone();
-                let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     match std::path::PathBuf::from(&target).canonicalize() {
                         Ok(path) => {
@@ -113,8 +106,10 @@ pub fn run() {
                             } else {
                                 (path, None)
                             };
+                            let registry = handle.state::<Registry>();
                             if let Err(e) =
-                                commands::open_board_file(&handle, &state, entry, project).await
+                                commands::open_board_file(&handle, &registry, entry, project)
+                                    .await
                             {
                                 tracing::error!("ETCHABLE_OPEN build failed: {e}");
                             }
@@ -123,35 +118,6 @@ pub fn run() {
                     }
                 });
             }
-
-            // Start the MCP server and write the generated mcp-config the
-            // agent gets pointed at (`--mcp-config`) — zero user setup.
-            let mcp_state = app_state.canvas.clone();
-            let state_for_mcp = app_state.clone();
-            let config_dir = app
-                .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| std::env::temp_dir());
-            tauri::async_runtime::spawn(async move {
-                match mcp::serve(mcp_state).await {
-                    Ok((addr, _handle)) => {
-                        tracing::info!("mcp server on http://{addr}/mcp");
-                        let config = mcp::mcp_config_json(addr);
-                        let path = config_dir.join("mcp-config.json");
-                        if let Err(e) = std::fs::create_dir_all(&config_dir) {
-                            tracing::error!("cannot create config dir: {e}");
-                            return;
-                        }
-                        match std::fs::write(&path, config.to_string()) {
-                            Ok(()) => {
-                                let _ = state_for_mcp.mcp_config_path.set(path);
-                            }
-                            Err(e) => tracing::error!("cannot write mcp config: {e}"),
-                        }
-                    }
-                    Err(e) => tracing::error!("mcp server failed to start: {e}"),
-                }
-            });
 
             Ok(())
         })
@@ -171,6 +137,16 @@ pub fn run() {
             commands::rebuild,
             commands::reload_workspace,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            // Quit in progress: window teardown must not resurrect the
+            // dashboard from its Destroyed handler.
+            app.state::<Registry>()
+                .exiting
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
 }

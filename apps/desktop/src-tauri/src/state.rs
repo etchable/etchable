@@ -21,23 +21,88 @@ pub struct BuildRequest {
     pub reply: Option<oneshot::Sender<Result<BuildSummary, String>>>,
 }
 
+/// One open project: everything scoped to a single `app-N` window. Each
+/// project window owns its own canvas state, builder task, fs watcher,
+/// MCP server, and agent session — windows are independent documents.
 pub struct AppState {
-    /// Shared with the MCP server; holds build output + selection.
+    /// The `app-N` window this instance renders into; all events emit
+    /// to exactly this window.
+    pub window_label: String,
+    /// Shared with this instance's MCP server; holds build output + selection.
     pub canvas: mcp::SharedState,
     /// Owned by the builder task via this queue.
     pub build_tx: mpsc::Sender<BuildRequest>,
     pub agent: tokio::sync::Mutex<Option<AgentSession>>,
     /// Written once the MCP listener is up.
     pub mcp_config_path: std::sync::OnceLock<PathBuf>,
-    /// Bundled stdlib source (the app's Resources/stdlib), set at startup
-    /// when present. Unset under `tauri dev` — upstream's exe-ancestor
-    /// discovery finds the repo's lib/std there.
+    /// Aborted on teardown so closed windows don't leak servers.
+    pub mcp_server: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
+    /// Bundled stdlib source (the app's Resources/stdlib), copied from the
+    /// registry at instance creation. Unset under `tauri dev` — upstream's
+    /// exe-ancestor discovery finds the repo's lib/std there.
     pub stdlib_source: std::sync::OnceLock<PathBuf>,
     /// Keeps the fs watcher alive; replaced when a new board is opened.
     pub watcher: std::sync::Mutex<Option<notify::RecommendedWatcher>>,
 }
 
 pub type SharedAppState = Arc<AppState>;
+
+/// App-global: the map from window label to project instance, plus the
+/// startup facts every instance copies.
+#[derive(Default)]
+pub struct Registry {
+    instances: std::sync::Mutex<std::collections::HashMap<String, SharedAppState>>,
+    next_id: std::sync::atomic::AtomicU64,
+    /// Bundled stdlib (Resources/stdlib), discovered once at startup.
+    pub stdlib_source: std::sync::OnceLock<PathBuf>,
+    /// Where per-instance mcp-config files are written.
+    pub config_dir: std::sync::OnceLock<PathBuf>,
+    /// Set on ExitRequested so window teardown stops resurrecting the
+    /// dashboard mid-quit.
+    pub exiting: std::sync::atomic::AtomicBool,
+}
+
+impl Registry {
+    pub fn next_label(&self) -> String {
+        let n = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("app-{}", n + 1)
+    }
+
+    pub fn insert(&self, state: SharedAppState) {
+        self.instances
+            .lock()
+            .expect("registry lock")
+            .insert(state.window_label.clone(), state);
+    }
+
+    pub fn get(&self, label: &str) -> Option<SharedAppState> {
+        self.instances
+            .lock()
+            .expect("registry lock")
+            .get(label)
+            .cloned()
+    }
+
+    pub fn remove(&self, label: &str) -> Option<SharedAppState> {
+        self.instances.lock().expect("registry lock").remove(label)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.instances.lock().expect("registry lock").is_empty()
+    }
+
+    /// An instance already showing this board file, if any (dedup on open).
+    pub fn find_by_source(&self, source: &std::path::Path) -> Option<SharedAppState> {
+        self.instances
+            .lock()
+            .expect("registry lock")
+            .values()
+            .find(|s| s.canvas.read(|c| c.source.as_deref() == Some(source)))
+            .cloned()
+    }
+}
 
 /// Project summary for the UI (`project-changed` payload + snapshot field).
 #[derive(Debug, Clone, Serialize)]

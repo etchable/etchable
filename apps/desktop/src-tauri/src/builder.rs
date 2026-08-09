@@ -18,6 +18,16 @@ pub const PROJECT_CHANGED: &str = "project-changed";
 
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
+/// Events go to this instance's window only — each project window is an
+/// independent document, and the UI listens window-scoped to match.
+fn emit<P: serde::Serialize + Clone>(app: &AppHandle, state: &AppState, event: &str, payload: P) {
+    let _ = app.emit_to(
+        tauri::EventTarget::webview_window(&state.window_label),
+        event,
+        payload,
+    );
+}
+
 type Reply = Option<oneshot::Sender<Result<BuildSummary, String>>>;
 
 /// Spawn the builder loop. `rebuild_rx` carries MCP-initiated requests;
@@ -83,7 +93,7 @@ pub fn spawn_builder(
                 || source.as_deref() != Some(want_source.as_path())
                 || workspace.as_ref().map(|w| w.root().to_path_buf()) != want_root;
 
-            let _ = app.emit(BUILD_STARTED, json!({"source": want_source}));
+            emit(&app, &state, BUILD_STARTED, json!({"source": want_source}));
 
             if need_open {
                 let path = want_source.clone();
@@ -125,7 +135,7 @@ pub fn spawn_builder(
                     let summary = BuildSummary::from_output(&output);
                     let view = BuildView::from(&output);
                     state.canvas.set_build(output);
-                    let _ = app.emit(BUILD_FINISHED, &view);
+                    emit(&app, &state, BUILD_FINISHED, &view);
                     if let Some(reply) = reply {
                         let _ = reply.send(Ok(summary));
                     }
@@ -244,7 +254,7 @@ async fn refresh_project(app: &AppHandle, state: &SharedAppState) {
         }
     };
     if let Some(view) = view {
-        let _ = app.emit(PROJECT_CHANGED, &view);
+        emit(app, state, PROJECT_CHANGED, &view);
     }
 }
 
@@ -277,7 +287,7 @@ fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, ms
     };
     let view = BuildView::from(&output);
     state.canvas.set_build(output);
-    let _ = app.emit(BUILD_FINISHED, &view);
+    emit(app, state, BUILD_FINISHED, &view);
     if let Some(reply) = reply {
         let _ = reply.send(Err(msg));
     }

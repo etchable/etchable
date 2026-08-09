@@ -146,27 +146,32 @@ pub async fn ensure_session(
     };
 
     let session = agent_host::AgentSession::spawn(config)?;
-    pump_events(app.clone(), session.subscribe());
+    pump_events(app.clone(), state.window_label.clone(), session.subscribe());
     *guard = Some(session);
 
-    let _ = app.emit(AGENT_EVENT, json!({"type": "status", "running": true}));
+    emit(app, &state.window_label, json!({"type": "status", "running": true}));
     Ok(())
 }
 
+/// Agent events belong to one project window; emit them there only.
+fn emit(app: &AppHandle, label: &str, payload: Value) {
+    let _ = app.emit_to(tauri::EventTarget::webview_window(label), AGENT_EVENT, payload);
+}
+
 /// Flatten protocol events into simple tagged JSON for the chat panel.
-fn pump_events(app: AppHandle, mut rx: agent_host::AgentEventRx) {
+fn pump_events(app: AppHandle, label: String, mut rx: agent_host::AgentEventRx) {
     tauri::async_runtime::spawn(async move {
         loop {
             let event = match rx.recv().await {
                 Ok(e) => e,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    let _ = app.emit(AGENT_EVENT, json!({"type": "status", "running": false}));
+                    emit(&app, &label, json!({"type": "status", "running": false}));
                     break;
                 }
             };
             for ui_event in flatten(event) {
-                let _ = app.emit(AGENT_EVENT, ui_event);
+                emit(&app, &label, ui_event);
             }
         }
     });

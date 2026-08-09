@@ -70,14 +70,20 @@ the trajectory).
   together), `agent-event` (flat tagged union, camelCase — see
   `apps/desktop/src-tauri/src/agent.rs::flatten`). UI mirrors live in
   `apps/desktop/src/types.ts`; keep both sides in sync when touching either.
-- Two windows, two pages (tauri.conf.json `app.windows` + vite multi-page):
-  `dashboard` (index.html, welcome screen) and `app` (app.html, canvas +
-  chat, starts hidden). Backend events broadcast app-wide, so both webviews
-  just listen. Every open flow funnels through `commands::open_board_file`,
-  which ends in `show_app_window`; windows HIDE instead of closing (the app
-  webview holds the chat transcript — destroying it loses the conversation),
-  and closing the last visible window exits (`on_window_event` in lib.rs).
-  `capabilities/default.json` must list both window labels.
+- Multi-window (vite multi-page + dynamic windows): the static `dashboard`
+  window (index.html, welcome screen) plus one dynamic `app-N` window per
+  open project (app.html, canvas + chat). Each project window owns a full
+  instance — canvas state, builder task, fs watcher, MCP server, agent
+  session — registered in `state::Registry` by window label; per-window
+  commands resolve through it, and events emit ONLY to their window
+  (`EventTarget::webview_window` in Rust + window-scoped `listen` in
+  state.ts — a global listen would hear every project's events). Open flows
+  funnel through `commands::open_board_file`: dedup by board path (focus
+  the existing window, never duplicate watchers/agents on one file);
+  teardown on failure and on window Destroyed (lib.rs). The dashboard hides
+  instead of closing and returns when the last project window closes;
+  closing it as the last visible window exits.
+  `capabilities/default.json` windows are `["dashboard", "app-*"]`.
 - Project format (docs/decisions/0002): a project dir is marked by
   `etch.toml`; `pcb.toml` stays byte-compatible with upstream
   (deny_unknown_fields — NEVER add custom keys to it) and owns name +

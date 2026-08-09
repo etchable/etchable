@@ -3,7 +3,8 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentEvent,
   BackendState,
@@ -40,6 +41,11 @@ export function useEtchable() {
   useEffect(() => {
     let disposed = false;
     const unlistens: UnlistenFn[] = [];
+    // Window-scoped on purpose: each project window is an independent
+    // document, and the backend emits build/agent events to exactly one
+    // window. A global listen would hear every window's events.
+    const win = getCurrentWebviewWindow();
+    const listen = win.listen.bind(win) as typeof win.listen;
     const track = (p: Promise<UnlistenFn>) => {
       p.then((u) => {
         if (disposed) u();
