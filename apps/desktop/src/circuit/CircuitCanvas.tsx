@@ -12,11 +12,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ComponentProps } from "react";
 import { SchematicViewer } from "@tscircuit/schematic-viewer";
+import { IconCornersOut, IconMinus, IconPlus } from "@etchable/ui";
 import type { BuildView, Diag, PositionIn } from "../types";
 
 // The viewer bundles its own circuit-json types (a different version than
 // our pin), so target its actual prop type rather than either package's.
 type ViewerCircuitJson = ComponentProps<typeof SchematicViewer>["circuitJson"];
+type CameraApiRef = NonNullable<ComponentProps<typeof SchematicViewer>["cameraApiRef"]>;
+
+const ZOOM_STEP = 1.25;
 
 const ACCENT = "#4d9fff";
 const ERROR = "#d64545";
@@ -153,7 +157,12 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     }
   };
 
-  // Escape clears the selection (unless typing in an input).
+  // The patched viewer hands us an imperative camera (zoom/fit/getScale).
+  const cameraRef = useRef<CameraApiRef["current"]>(null);
+
+  // Keyboard: Escape clears the selection; +/- zoom at center; f or 0
+  // fits the whole board (the recovery action — the camera never refits
+  // on its own). All skipped while typing in an input.
   useEffect(() => {
     const isTyping = () => {
       const el = document.activeElement;
@@ -164,8 +173,15 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       );
     };
     const down = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isTyping() && selectionRef.current.length > 0) {
+      if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "Escape" && selectionRef.current.length > 0) {
         onSelectRef.current([]);
+      } else if (e.key === "+" || e.key === "=") {
+        cameraRef.current?.zoom(ZOOM_STEP);
+      } else if (e.key === "-") {
+        cameraRef.current?.zoom(1 / ZOOM_STEP);
+      } else if (e.key === "f" || e.key === "0") {
+        cameraRef.current?.fit();
       }
     };
     window.addEventListener("keydown", down);
@@ -313,6 +329,9 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
           key={source ?? "no-board"}
           circuitJson={withEditCount(view.circuit_json)}
           editingEnabled
+          defaultEditMode
+          hideChrome
+          cameraApiRef={cameraRef}
           onEditEvent={handleEditEvent}
           containerStyle={{
             width: "100%",
@@ -348,6 +367,32 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         />
       ) : (
         <div className="canvas-empty" />
+      )}
+
+      {view && view.circuit_json.length > 0 && (
+        <div className="absolute bottom-2.5 right-2.5 flex items-center gap-0.5 rounded-full bg-white px-1 py-0.5 shadow-island">
+          {(
+            [
+              { label: "Zoom out (-)", icon: <IconMinus />, act: () => cameraRef.current?.zoom(1 / ZOOM_STEP) },
+              { label: "Zoom to fit (F)", icon: <IconCornersOut />, act: () => cameraRef.current?.fit() },
+              { label: "Zoom in (+)", icon: <IconPlus />, act: () => cameraRef.current?.zoom(ZOOM_STEP) },
+            ] as const
+          ).map(({ label, icon, act }) => (
+            <button
+              key={label}
+              type="button"
+              aria-label={label}
+              title={label}
+              className="flex h-6 w-6 items-center justify-center rounded-full text-ink/55 transition-colors hover:bg-ink/5 hover:text-ink"
+              onClick={(e) => {
+                e.stopPropagation();
+                act();
+              }}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
       )}
 
       {dimmed && (

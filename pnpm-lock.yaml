@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@tscircuit/schematic-viewer':
-    hash: 2beb59d91e8501bae04b9de61c10767322334556226e51c7959f66cf8f2a26fe
+    hash: 4f81024c9c577053f6a3c82452cc6d8223902937a7d6e440eda3222bf8845953
     path: patches/@tscircuit__schematic-viewer.patch
 
 importers:
@@ -47,7 +47,7 @@ importers:
         version: 0.0.105(circuit-json@0.0.465(format-si-unit@0.0.11(typescript@5.8.3)))(transformation-matrix@3.1.0)(zod@3.25.76)
       '@tscircuit/schematic-viewer':
         specifier: 2.0.76
-        version: 2.0.76(patch_hash=2beb59d91e8501bae04b9de61c10767322334556226e51c7959f66cf8f2a26fe)(@tscircuit/alphabet@0.0.25(typescript@5.8.3))(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(format-si-unit@0.0.11(typescript@5.8.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tscircuit@0.0.2261(@tscircuit/schematic-corpus@0.0.114(typescript@5.8.3))(bun-match-svg@0.0.15(typescript@5.8.3))(looks-same@9.0.1)(three@0.179.1)(typescript@5.8.3))(typescript@5.8.3)
+        version: 2.0.76(patch_hash=4f81024c9c577053f6a3c82452cc6d8223902937a7d6e440eda3222bf8845953)(@tscircuit/alphabet@0.0.25(typescript@5.8.3))(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(format-si-unit@0.0.11(typescript@5.8.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tscircuit@0.0.2261(@tscircuit/schematic-corpus@0.0.114(typescript@5.8.3))(bun-match-svg@0.0.15(typescript@5.8.3))(looks-same@9.0.1)(three@0.179.1)(typescript@5.8.3))(typescript@5.8.3)
       '@tscircuit/soup-util':
         specifier: 0.0.41
         version: 0.0.41(circuit-json@0.0.465(format-si-unit@0.0.11(typescript@5.8.3)))(transformation-matrix@3.1.0)(zod@3.25.76)
@@ -6934,7 +6934,7 @@ snapshots:
     dependencies:
       typescript: 5.8.3
 
-  '@tscircuit/schematic-viewer@2.0.76(patch_hash=2beb59d91e8501bae04b9de61c10767322334556226e51c7959f66cf8f2a26fe)(@tscircuit/alphabet@0.0.25(typescript@5.8.3))(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(format-si-unit@0.0.11(typescript@5.8.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tscircuit@0.0.2261(@tscircuit/schematic-corpus@0.0.114(typescript@5.8.3))(bun-match-svg@0.0.15(typescript@5.8.3))(looks-same@9.0.1)(three@0.179.1)(typescript@5.8.3))(typescript@5.8.3)':
+  '@tscircuit/schematic-viewer@2.0.76(patch_hash=4f81024c9c577053f6a3c82452cc6d8223902937a7d6e440eda3222bf8845953)(@tscircuit/alphabet@0.0.25(typescript@5.8.3))(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(format-si-unit@0.0.11(typescript@5.8.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tscircuit@0.0.2261(@tscircuit/schematic-corpus@0.0.114(typescript@5.8.3))(bun-match-svg@0.0.15(typescript@5.8.3))(looks-same@9.0.1)(three@0.179.1)(typescript@5.8.3))(typescript@5.8.3)':
     dependencies:
       '@radix-ui/react-dropdown-menu': 2.1.24(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       circuit-json: 0.0.454(format-si-unit@0.0.11(typescript@5.8.3))

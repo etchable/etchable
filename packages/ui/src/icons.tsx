@@ -3,7 +3,9 @@ import {
   CaretDown,
   CaretRight,
   Check,
+  CornersOut,
   Crosshair,
+  Minus,
   Plus,
   SidebarSimple,
   SquaresFour,
@@ -25,6 +27,8 @@ function chrome(Icon: ComponentType<IconProps>, defaultWeight: IconProps["weight
 export const IconCheck = chrome(Check, "bold");
 export const IconX = chrome(X, "bold");
 export const IconPlus = chrome(Plus);
+export const IconMinus = chrome(Minus);
+export const IconCornersOut = chrome(CornersOut);
 export const IconStop = chrome(Stop, "fill");
 export const IconChevronRight = chrome(CaretRight, "bold");
 export const IconChevronDown = chrome(CaretDown, "bold");

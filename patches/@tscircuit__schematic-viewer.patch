@@ -1,5 +1,28 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index bcf341385d9e2ef4b6a8c6496be9648fb8d540a0..e3c9714beac2ce19d1bcbda0628d0cd9012116c2 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -31,6 +31,18 @@ interface Props$1 {
+     }) => void;
+     /** Called when the active schematic sheet changes (multi-sheet circuits). */
+     onSchematicSheetChange?: (schematicSheetId: string) => void;
++    /** PATCH(etchable): imperative camera controls for the host app. */
++    cameraApiRef?: React.MutableRefObject<SchematicCameraApi | null>;
++    /** PATCH(etchable): hide the built-in edit/grid/menu icons. */
++    hideChrome?: boolean;
++}
++interface SchematicCameraApi {
++    /** Multiply the zoom by `factor`, anchored at the container center. */
++    zoom(factor: number): void;
++    /** Fit the whole schematic in the container. */
++    fit(): void;
++    /** Current user zoom multiplier (1 = the fitted view). */
++    getScale(): number;
+ }
+ declare const SchematicViewer: ({ circuitJson, containerStyle, editEvents: unappliedEditEvents, onEditEvent, defaultEditMode, debugGrid, editingEnabled, debug, clickToInteractEnabled, colorOverrides, disableGroups, netHoverHighlightEnabled, onSchematicComponentClicked, showSchematicPorts, onSchematicPortClicked, onSchematicSheetChange, css, className, }: Props$1) => react.JSX.Element;
+ 
 diff --git a/dist/index.js b/dist/index.js
-index ac4954915a489ce21cc3d6d127f708aedf4f8215..593b75ae2cc29e33f3d89699606eb3d72e76049b 100644
+index ac4954915a489ce21cc3d6d127f708aedf4f8215..7c0064b86e6f7c9f92cda106a5e0cdecd5ea3087 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -589,10 +589,12 @@ var enableDebug = () => {
@@ -16,7 +39,16 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..593b75ae2cc29e33f3d89699606eb3d7
    toString as transformToString
  } from "transformation-matrix";
  import { useMouseMatrixTransform } from "use-mouse-matrix-transform";
-@@ -2081,6 +2083,7 @@ var SchematicViewer = ({
+@@ -1930,6 +1932,8 @@ var SchematicViewer = ({
+   showSchematicPorts = false,
+   onSchematicPortClicked,
+   onSchematicSheetChange,
++  cameraApiRef,
++  hideChrome = false,
+   css,
+   className
+ }) => {
+@@ -2081,6 +2085,7 @@ var SchematicViewer = ({
    const {
      ref: containerRef,
      cancelDrag,
@@ -24,7 +56,7 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..593b75ae2cc29e33f3d89699606eb3d7
      transform: svgToScreenProjection
    } = useMouseMatrixTransform({
      onSetTransform(transform) {
-@@ -2132,6 +2135,24 @@ var SchematicViewer = ({
+@@ -2132,6 +2137,58 @@ var SchematicViewer = ({
        return identity();
      }
    }, [svgString]);
@@ -46,6 +78,65 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..593b75ae2cc29e33f3d89699606eb3d7
 +    if (prevF.a === F.a && prevF.b === F.b && prevF.c === F.c && prevF.d === F.d && prevF.e === F.e && prevF.f === F.f) return;
 +    setCameraTransform(composeCam(svgToScreenProjection, prevF, inverseCam(F)));
 +  }, [realToSvgProjection]);
++  // PATCH(etchable): imperative camera controls for the host app. With the
++  // camera-preservation effect above, the svg's baked-in fit always matches
++  // the current container, so fit() is exactly "reset the user matrix".
++  useEffect11(() => {
++    if (!cameraApiRef) return;
++    const zoomAt = (factor, cx, cy) => {
++      setCameraTransform(
++        composeCam(
++          { a: 1, b: 0, c: 0, d: 1, e: cx, f: cy },
++          { a: factor, b: 0, c: 0, d: factor, e: 0, f: 0 },
++          { a: 1, b: 0, c: 0, d: 1, e: -cx, f: -cy },
++          svgToScreenProjection
++        )
++      );
++    };
++    cameraApiRef.current = {
++      /** Multiply the zoom by `factor`, anchored at the container center. */
++      zoom(factor) {
++        const rect = containerRef.current?.getBoundingClientRect();
++        zoomAt(factor, (rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2);
++      },
++      /** Fit the whole schematic in the container (the svg's own fit). */
++      fit() {
++        setCameraTransform(identity());
++      },
++      /** Current user zoom multiplier (1 = the fitted view). */
++      getScale() {
++        return svgToScreenProjection.a;
++      }
++    };
++    return () => {
++      cameraApiRef.current = null;
++    };
++  }, [cameraApiRef, svgToScreenProjection]);
    const handleEditEvent = (event) => {
      setInternalEditEvents((prev) => [...prev, event]);
      if (onEditEvent) {
+@@ -2276,21 +2333,21 @@ var SchematicViewer = ({
+               )
+             }
+           ),
+-          editingEnabled && /* @__PURE__ */ jsx9(
++          editingEnabled && !hideChrome && /* @__PURE__ */ jsx9(
+             EditIcon,
+             {
+               active: editModeEnabled,
+               onClick: () => setEditModeEnabled(!editModeEnabled)
+             }
+           ),
+-          editingEnabled && editModeEnabled && /* @__PURE__ */ jsx9(
++          editingEnabled && editModeEnabled && !hideChrome && /* @__PURE__ */ jsx9(
+             GridIcon,
+             {
+               active: snapToGrid,
+               onClick: () => setSnapToGrid(!snapToGrid)
+             }
+           ),
+-          /* @__PURE__ */ jsx9(
++          !hideChrome && /* @__PURE__ */ jsx9(
+             ViewMenu,
+             {
+               circuitJson,
