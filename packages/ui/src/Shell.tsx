@@ -266,10 +266,13 @@ export function Shell({
       }
 
       // nothing left to reopen → grow toward remembered widths, evening
-      // the two debts out before splitting what remains
+      // the two debts out before splitting what remains. Closed sidebars
+      // accrue no debt: a user-closed sidebar still remembers prevUserSet
+      // for its next manual open, but growing it here would pop it open
+      // (or inflate a shell-closed one into a sliver) on window resize.
       if (!needsReopen(m.left) && !needsReopen(m.right)) {
-        let leftWant = m.left.prevUserSet - m.left.width;
-        let rightWant = m.right.prevUserSet - m.right.width;
+        let leftWant = m.left.width <= CLOSED ? 0 : m.left.prevUserSet - m.left.width;
+        let rightWant = m.right.width <= CLOSED ? 0 : m.right.prevUserSet - m.right.width;
 
         if (leftWant > rightWant) {
           const d = Math.min(leftWant - rightWant, capacity);

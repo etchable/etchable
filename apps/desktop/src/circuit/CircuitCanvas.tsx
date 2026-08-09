@@ -79,64 +79,54 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   const clickHandledRef = useRef(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  const innerRef = useRef<HTMLDivElement>(null);
-
   // The paper dot grid lives on the container as a CSS background; the
-  // viewer stamps its projection on the SVG as data-real-to-screen-transform.
-  // Mirror that matrix onto the background so the grid pans and zooms with
-  // the board (adapting the cell by powers of 5 to keep a sane density),
-  // instead of sitting behind it as static wallpaper.
+  // viewer stamps its real->svg fit on the SVG as
+  // data-real-to-screen-transform, and applies the user's pan/zoom as a CSS
+  // matrix on the div wrapping that SVG. The full real->screen mapping is
+  // the composition of the two; mirror it onto the background so the grid
+  // pans and zooms with the board (adapting the cell by powers of 5 to keep
+  // a sane density), instead of sitting behind it as static wallpaper.
   //
-  // The same observer keeps the camera steady across rebuilds: circuit-to-svg
-  // re-fits the SVG to element bounds on every regeneration, so after a
-  // drag-save rebuild the fit translates and we apply the inverse translation
-  // to an inner wrapper. The viewer ALSO regenerates whenever its container
-  // resizes (seam drags, sidebar toggles, window resizes), and those re-fits
-  // are legitimate — so the discriminator is the container size, not the
-  // transform: a same-size regeneration is a rebuild echo (compensate;
-  // a scale change beyond ±2% is a real refit and resets), while a resized
-  // container means we accept the new fit and drop any compensation.
+  // Camera stability across refits (container resizes, rebuild echoes) is
+  // NOT handled here anymore: the vendored viewer patch
+  // (patches/@tscircuit__schematic-viewer.patch) folds every fit change into
+  // the viewer's own pan/zoom matrix, so the schematic stays locked in place
+  // and this observer only has to keep the grid glued to it.
   // Direct style writes, not state — pan/zoom emits a mutation per frame.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    let last: { a: number; e: number; f: number; w: number; h: number } | null = null;
-    let offset = { x: 0, y: 0 };
-    if (innerRef.current) innerRef.current.style.transform = "";
-    const sync = () => {
-      const raw = wrap
-        .querySelector("[data-real-to-screen-transform]")
-        ?.getAttribute("data-real-to-screen-transform");
+    const parse = (raw: string | null | undefined) => {
       const m = raw?.match(/matrix\(([^)]*)\)/);
-      if (!m) return;
-      const [a, , , , e, f] = m[1].split(/[,\s]+/).map(Number);
-      const unit = Math.abs(a); // px per schematic unit
-      if (!Number.isFinite(unit) || unit === 0 || !Number.isFinite(e) || !Number.isFinite(f)) return;
-
-      const rect = wrap.getBoundingClientRect();
-      const resized = last !== null && (rect.width !== last.w || rect.height !== last.h);
-
-      if (resized) {
-        offset = { x: 0, y: 0 };
-        if (innerRef.current) innerRef.current.style.transform = "";
-      } else if (last && (e !== last.e || f !== last.f || a !== last.a)) {
-        if (Math.abs(a - last.a) <= 0.02 * Math.abs(last.a)) {
-          offset = { x: offset.x + (last.e - e), y: offset.y + (last.f - f) };
-        } else {
-          offset = { x: 0, y: 0 };
-        }
-        if (innerRef.current) {
-          innerRef.current.style.transform =
-            offset.x || offset.y ? `translate(${offset.x}px, ${offset.y}px)` : "";
+      if (!m) return null;
+      const [a, b, c, d, e, f] = m[1].split(/[,\s]+/).map(Number);
+      if (![a, b, c, d, e, f].every(Number.isFinite)) return null;
+      return { a, d, e, f };
+    };
+    const sync = () => {
+      const svg = wrap.querySelector("[data-real-to-screen-transform]");
+      const fit = parse(svg?.getAttribute("data-real-to-screen-transform"));
+      if (!fit || fit.a === 0) return;
+      // The user pan/zoom matrix lives on an ancestor between the svg and
+      // the container; identity when absent (fresh mount, no interaction).
+      let user = { a: 1, d: 1, e: 0, f: 0 };
+      for (let el = svg?.parentElement; el && el !== wrap; el = el.parentElement) {
+        const t = el instanceof HTMLElement ? parse(el.style.transform) : null;
+        if (t) {
+          user = t;
+          break;
         }
       }
-      last = { a, e, f, w: rect.width, h: rect.height };
+      const scale = Math.abs(user.a * fit.a); // px per schematic unit
+      const ex = user.a * fit.e + user.e;
+      const fy = user.d * fit.f + user.f;
+      if (!Number.isFinite(scale) || scale === 0) return;
 
-      let cell = unit;
+      let cell = scale;
       while (cell < 18) cell *= 5;
       while (cell > 220) cell /= 5;
       wrap.style.backgroundSize = `${cell}px ${cell}px`;
-      wrap.style.backgroundPosition = `${e + offset.x}px ${f + offset.y}px`;
+      wrap.style.backgroundPosition = `${ex}px ${fy}px`;
     };
     sync();
     const observer = new MutationObserver(sync);
@@ -144,7 +134,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["data-real-to-screen-transform"],
+      attributeFilter: ["data-real-to-screen-transform", "style"],
     });
     return () => observer.disconnect();
   }, [source]);
@@ -319,7 +309,6 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       onClick={onContainerClick}
     >
       {view && view.circuit_json.length > 0 ? (
-        <div ref={innerRef} style={{ width: "100%", height: "100%" }}>
         <SchematicViewer
           key={source ?? "no-board"}
           circuitJson={withEditCount(view.circuit_json)}
@@ -357,7 +346,6 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
             if (path) applyClick(path, event.shiftKey);
           }}
         />
-        </div>
       ) : (
         <div className="canvas-empty" />
       )}

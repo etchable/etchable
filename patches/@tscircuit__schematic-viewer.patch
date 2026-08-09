@@ -1,0 +1,51 @@
+diff --git a/dist/index.js b/dist/index.js
+index ac4954915a489ce21cc3d6d127f708aedf4f8215..593b75ae2cc29e33f3d89699606eb3d72e76049b 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -589,10 +589,12 @@ var enableDebug = () => {
+ var debug_default = debug;
+ 
+ // lib/components/SchematicViewer.tsx
+-import { useCallback as useCallback6, useEffect as useEffect11, useMemo as useMemo4, useRef as useRef8, useState as useState6 } from "react";
++import { useCallback as useCallback6, useEffect as useEffect11, useLayoutEffect as useLayoutEffect11, useMemo as useMemo4, useRef as useRef8, useState as useState6 } from "react";
+ import {
++  compose as composeCam,
+   fromString,
+   identity,
++  inverse as inverseCam,
+   toString as transformToString
+ } from "transformation-matrix";
+ import { useMouseMatrixTransform } from "use-mouse-matrix-transform";
+@@ -2081,6 +2083,7 @@ var SchematicViewer = ({
+   const {
+     ref: containerRef,
+     cancelDrag,
++    setTransform: setCameraTransform,
+     transform: svgToScreenProjection
+   } = useMouseMatrixTransform({
+     onSetTransform(transform) {
+@@ -2132,6 +2135,24 @@ var SchematicViewer = ({
+       return identity();
+     }
+   }, [svgString]);
++  // PATCH(etchable): keep the camera locked when the svg refits. circuit-to-svg
++  // recomputes the real->svg fit whenever the container resizes or the circuit
++  // regenerates; without compensation the schematic visibly jumps. Fold the fit
++  // delta into the user pan/zoom matrix (U' = U * F_prev * F_new^-1) so the
++  // real->screen mapping is unchanged. Skips the first real fit (prev identity)
++  // so the initial auto-fit still applies. useLayoutEffect: compensate before
++  // paint, no flash.
++  const camPrevFitRef = useRef8(null);
++  useLayoutEffect11(() => {
++    const F = realToSvgProjection;
++    const prevF = camPrevFitRef.current;
++    camPrevFitRef.current = F;
++    if (!prevF || !F || prevF === F) return;
++    const isIdentity = (t) => t.a === 1 && t.b === 0 && t.c === 0 && t.d === 1 && t.e === 0 && t.f === 0;
++    if (isIdentity(prevF) || isIdentity(F)) return;
++    if (prevF.a === F.a && prevF.b === F.b && prevF.c === F.c && prevF.d === F.d && prevF.e === F.e && prevF.f === F.f) return;
++    setCameraTransform(composeCam(svgToScreenProjection, prevF, inverseCam(F)));
++  }, [realToSvgProjection]);
+   const handleEditEvent = (event) => {
+     setInternalEditEvents((prev) => [...prev, event]);
+     if (onEditEvent) {

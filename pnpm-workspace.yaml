@@ -5,3 +5,6 @@ packages:
 onlyBuiltDependencies:
   - esbuild
   - workerd
+
+patchedDependencies:
+  '@tscircuit/schematic-viewer': patches/@tscircuit__schematic-viewer.patch

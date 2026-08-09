@@ -1,8 +1,12 @@
 // Dev-only: mount Chat with stub props (see repro.html).
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { Shell } from "@etchable/ui";
 import Chat from "./chat/Chat";
 import type { ChatItem } from "./chat/messages";
+import CircuitCanvas from "./circuit/CircuitCanvas";
+import type { BuildView } from "./types";
+import demoCircuit from "./repro-fixtures/demo-circuit.json";
 import "./App.css";
 
 // ?state=turn renders a finished turn with thinking + tools + answer.
@@ -172,8 +176,66 @@ const PERMISSION: ChatItem[] = [
   },
 ];
 
+// ?state=canvas renders the schematic canvas with the demo board's circuit
+// json (regenerate src/repro-fixtures/demo-circuit.json with
+// `cargo run -q -p zen-build -- examples/demo/board.zen --circuit-json`).
+// Exercises camera lock across container resizes.
+function CanvasRepro() {
+  const view: BuildView = {
+    version: 3,
+    source: "examples/demo/board.zen",
+    schematic: null,
+    diagnostics: [],
+    circuit_json: (demoCircuit as { elements: BuildView["circuit_json"] }).elements,
+    id_map: (demoCircuit as { id_map: Record<string, string> }).id_map,
+    source_hash: null,
+  };
+  const [selection, setSelection] = React.useState<string[]>([]);
+  return (
+    <CircuitCanvas
+      view={view}
+      source={view.source}
+      dimmed={false}
+      diagnostics={[]}
+      selection={selection}
+      onSelectionChange={setSelection}
+      onSavePositions={(p) => console.log("savePositions", p)}
+    />
+  );
+}
+
+// ?state=shell renders the app shell with both sidebars; used to verify a
+// user-closed sidebar stays closed across window resizes.
+function ShellRepro() {
+  return (
+    <Shell
+      titlebar={<div className="px-3 text-sm">shell repro</div>}
+      leftSidebar={<div className="p-3 text-sm">left sidebar</div>}
+      rightSidebar={<div className="p-3 text-sm" data-testid="right-sidebar">right sidebar</div>}
+      rightMinWidth={340}
+      defaultRightWidth={360}
+    >
+      <div className="dotgrid h-full w-full p-4 text-sm">content</div>
+    </Shell>
+  );
+}
+
 function Repro() {
   const state = new URLSearchParams(location.search).get("state");
+  if (state === "canvas") {
+    return (
+      <div style={{ position: "fixed", inset: 0, display: "flex" }}>
+        <CanvasRepro />
+      </div>
+    );
+  }
+  if (state === "shell") {
+    return (
+      <div style={{ position: "fixed", inset: 0 }}>
+        <ShellRepro />
+      </div>
+    );
+  }
   const transcripts: Record<string, ChatItem[]> = {
     turn: TURN,
     working: WORKING,
