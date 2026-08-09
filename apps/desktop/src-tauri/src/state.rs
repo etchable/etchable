@@ -37,6 +37,16 @@ pub struct AppState {
     pub mcp_config_path: std::sync::OnceLock<PathBuf>,
     /// Aborted on teardown so closed windows don't leak servers.
     pub mcp_server: std::sync::OnceLock<tokio::task::JoinHandle<()>>,
+    /// `~/.etchable/state` sqlite, cloned from the registry at instance
+    /// creation. `None` = persistence unavailable (open failed at startup,
+    /// logged once) — every caller degrades gracefully.
+    pub store: Option<store::Store>,
+    /// First user message of a not-yet-spawned session; taken by the init
+    /// recording in `agent::pump_events` (the session id doesn't exist at
+    /// send time, so recording can't happen there).
+    pub pending_title: std::sync::Mutex<Option<String>>,
+    /// Set by `resume_session`; links the forked session to its ancestor.
+    pub pending_resumed_from: std::sync::Mutex<Option<String>>,
     /// Bundled stdlib source (the app's Resources/stdlib), copied from the
     /// registry at instance creation. Unset under `tauri dev` — upstream's
     /// exe-ancestor discovery finds the repo's lib/std there.
@@ -57,12 +67,21 @@ pub struct Registry {
     pub stdlib_source: std::sync::OnceLock<PathBuf>,
     /// Where per-instance mcp-config files are written.
     pub config_dir: std::sync::OnceLock<PathBuf>,
+    /// The `~/.etchable/state` sqlite, opened once at startup (None =
+    /// running without persistence). Instances clone it — the connection
+    /// pool is shared.
+    pub store: std::sync::OnceLock<Option<store::Store>>,
     /// Set on ExitRequested so window teardown stops resurrecting the
     /// dashboard mid-quit.
     pub exiting: std::sync::atomic::AtomicBool,
 }
 
 impl Registry {
+    /// The app-global store, if persistence is available.
+    pub fn store(&self) -> Option<&store::Store> {
+        self.store.get().and_then(|o| o.as_ref())
+    }
+
     pub fn next_label(&self) -> String {
         let n = self
             .next_id

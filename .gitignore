@@ -37,3 +37,4 @@ dist-ssr
 
 # nix build output
 /result
+/crates/store/bindings

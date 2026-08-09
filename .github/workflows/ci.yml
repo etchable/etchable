@@ -55,3 +55,6 @@ jobs:
 
       - name: Symbol geometry table matches schematic-symbols pin
         run: pnpm --filter @etchable/desktop gen:symbol-geom:check
+
+      - name: Store types are in sync (ts-rs)
+        run: pnpm --filter @etchable/desktop gen:store-types:check

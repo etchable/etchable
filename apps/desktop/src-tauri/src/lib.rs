@@ -61,6 +61,19 @@ pub fn run() {
             let handle = app.handle().clone();
             let registry = app.state::<Registry>();
 
+            // ~/.etchable/ housekeeping: adopt any pre-0005 cache, open the
+            // state db. A failed open (e.g. a db from a newer build) logs
+            // once and the app runs without persistence — never bricked.
+            store::paths::migrate_legacy_lcsc_cache();
+            let opened = tauri::async_runtime::block_on(store::Store::open_default());
+            let _ = registry.store.set(match opened {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::error!("state db unavailable, running without persistence: {e:#}");
+                    None
+                }
+            });
+
             // Packaged apps carry the stdlib in Resources/stdlib (see
             // bundle.resources); exe-ancestor discovery can never find
             // lib/std from inside an .app. Under `tauri dev` the bundled
@@ -73,12 +86,13 @@ pub fn run() {
                 }
             }
 
-            // Per-instance mcp-config files land here (see create_instance).
-            let config_dir = app
-                .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| std::env::temp_dir());
-            let _ = registry.config_dir.set(config_dir);
+            // Per-instance mcp-config files land in ~/.etchable/runtime
+            // (see create_instance), pid-suffixed so concurrent app
+            // processes never clobber each other; stale files from dead
+            // processes are swept here.
+            let runtime_dir = store::paths::runtime_dir();
+            sweep_stale_runtime_files(&runtime_dir);
+            let _ = registry.config_dir.set(runtime_dir);
 
             // Dev nicety: ETCHABLE_OPEN=<board.zen or project dir> opens at
             // startup (relative to the invocation cwd).
@@ -136,6 +150,11 @@ pub fn run() {
             commands::resume_session,
             commands::rebuild,
             commands::reload_workspace,
+            commands::list_recent_projects,
+            commands::remove_recent_project,
+            commands::list_sessions,
+            commands::get_prefs,
+            commands::set_pref,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -149,4 +168,33 @@ pub fn run() {
                 .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     });
+}
+
+/// Remove runtime scratch left by dead processes. Age-based on purpose:
+/// pid-liveness checks are platform-fiddly, the files are ~100 bytes, and
+/// week-old scratch from a still-running process is vanishingly rare.
+/// (This process's own files are pid-prefixed, so age never bites them —
+/// they're rewritten on every instance creation.)
+fn sweep_stale_runtime_files(dir: &std::path::Path) {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+    let own_prefix = format!("mcp-config-{}-", std::process::id());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("mcp-config-") || name.starts_with(own_prefix.as_str()) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > MAX_AGE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

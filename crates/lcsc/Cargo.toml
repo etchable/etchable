@@ -17,7 +17,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Some EasyEDA paths return raw gzip regardless of Accept-Encoding; we sniff
 # the 1f 8b magic and inflate ourselves.
 flate2 = "1"
-dirs = "6"
 
 [dev-dependencies]
 tempfile = "3"

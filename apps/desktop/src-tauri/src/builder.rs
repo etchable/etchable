@@ -152,58 +152,20 @@ pub fn spawn_builder(
     });
 }
 
-/// Open offline first — etchable projects declare no remote dependencies, so
-/// this is the normal (and packaged-app) mode. If the offline open fails AND
-/// pcb.toml actually declares `[dependencies]`, retry once online.
+/// Resolution never touches the network (the dep-less frozen resolver,
+/// decision 0005): a manifest with remote `[dependencies]` fails with a
+/// clear error rather than earning a retry.
 fn open_workspace(
     path: &Path,
     stdlib_source: Option<PathBuf>,
 ) -> anyhow::Result<zen_build::Workspace> {
-    let opts = zen_build::OpenOptions {
-        offline: true,
-        stdlib_source,
-    };
-    match zen_build::Workspace::open_with(path, &opts) {
-        Ok(ws) => Ok(ws),
-        Err(e) if manifest_declares_dependencies(path) => {
-            tracing::warn!("offline open failed ({e:#}); retrying online for declared deps");
-            zen_build::Workspace::open_with(
-                path,
-                &zen_build::OpenOptions {
-                    offline: false,
-                    ..opts
-                },
-            )
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Walk up from the .zen file to the nearest pcb.toml and check for a
-/// non-trivial `[dependencies]` table. Textual on purpose: this only gates
-/// whether a failed offline open earns one online retry.
-fn manifest_declares_dependencies(path: &Path) -> bool {
-    let mut dir = if path.is_file() { path.parent() } else { Some(path) };
-    while let Some(d) = dir {
-        let manifest = d.join("pcb.toml");
-        if manifest.is_file() {
-            let Ok(text) = std::fs::read_to_string(&manifest) else {
-                return false;
-            };
-            let mut in_deps = false;
-            for line in text.lines() {
-                let line = line.trim();
-                if line.starts_with('[') {
-                    in_deps = line == "[dependencies]";
-                } else if in_deps && !line.is_empty() && !line.starts_with('#') {
-                    return true;
-                }
-            }
-            return false;
-        }
-        dir = d.parent();
-    }
-    false
+    zen_build::Workspace::open_with(
+        path,
+        &zen_build::OpenOptions {
+            offline: true,
+            stdlib_source,
+        },
+    )
 }
 
 /// Re-read the project manifests. Never clears a live project on failure —

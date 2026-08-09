@@ -90,12 +90,18 @@ pnpm install
 pnpm tauri dev              # from the repo root (or apps/desktop)
 ```
 
-Then open `examples/demo/board.zen` from the toolbar. First build of a board
-fetches its package deps into `~/.pcb/cache`.
+Then open `examples/demo/board.zen` from the toolbar.
+
+App-local data lives under `~/.etchable/` (decision 0005): `cache/` is
+disposable (`rm -rf` safe), `state/etchable.sqlite3` holds recents, agent
+sessions, and UI prefs, `runtime/` is per-instance scratch. Deleting
+`~/.etchable` fully resets the app.
 
 Env knobs: `ETCHABLE_CLAUDE_BIN` (claude binary path), `ETCHABLE_MODEL`
 (model override), `ETCHABLE_OPEN` (absolute path to a .zen board to open at
-startup — handy in dev), `RUST_LOG`.
+startup — handy in dev), `ETCHABLE_HOME` (relocate `~/.etchable`),
+`ETCHABLE_CACHE_DIR` (relocate just the cache), `ETCHABLE_LCSC_OFFLINE=1`
+(no network; CI sets it), `RUST_LOG`.
 
 ### M0 pipeline CLI
 

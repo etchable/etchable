@@ -36,8 +36,12 @@ ALWAYS with an LCSC part in the component card ([vendors.lcsc] part = \
 \"C…\") — otherwise house-part substitution happens silently.\n\
 2. Everything else comes from LCSC. search_parts queries the live JLCPCB \
 assembly catalog (stock, price, Basic/Extended class) alongside local \
-libraries. Prefer class=basic with healthy stock — extended parts carry a \
-JLC setup fee, and stock 0 is unbuildable.\n\
+libraries, ranked Basic-first. If a class=basic part with stock satisfies \
+the requirement, USE IT — every Extended part adds a per-part JLC setup \
+fee. Pick Extended only when no Basic part fits, and tell the user which \
+requirement forced it. The class is recorded in the card \
+([vendors.lcsc] basic = true/false) and get_parts summarizes the BOM's \
+Basic/Extended split for the user.\n\
 3. get_lcsc_part BEFORE committing to a part: it shows lifecycle status, \
 MSL, price breaks, and whether usable CAD data exists (pin/pad counts are \
 the best early warning for a bad EasyEDA part).\n\
@@ -146,7 +150,7 @@ pub async fn ensure_session(
     };
 
     let session = agent_host::AgentSession::spawn(config)?;
-    pump_events(app.clone(), state.window_label.clone(), session.subscribe());
+    pump_events(app.clone(), state.clone(), session.subscribe());
     *guard = Some(session);
 
     emit(app, &state.window_label, json!({"type": "status", "running": true}));
@@ -158,9 +162,17 @@ fn emit(app: &AppHandle, label: &str, payload: Value) {
     let _ = app.emit_to(tauri::EventTarget::webview_window(label), AGENT_EVENT, payload);
 }
 
-/// Flatten protocol events into simple tagged JSON for the chat panel.
-fn pump_events(app: AppHandle, label: String, mut rx: agent_host::AgentEventRx) {
+/// Flatten protocol events into simple tagged JSON for the chat panel,
+/// recording session lifecycle into the store on the way (`flatten` itself
+/// stays a pure translator).
+fn pump_events(app: AppHandle, state: SharedAppState, mut rx: agent_host::AgentEventRx) {
+    let workspace_root = state
+        .canvas
+        .read(|s| s.workspace_root.clone())
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
     tauri::async_runtime::spawn(async move {
+        let label = state.window_label.clone();
         loop {
             let event = match rx.recv().await {
                 Ok(e) => e,
@@ -170,11 +182,51 @@ fn pump_events(app: AppHandle, label: String, mut rx: agent_host::AgentEventRx) 
                     break;
                 }
             };
+            record_session_event(&state, &workspace_root, &event).await;
             for ui_event in flatten(event) {
                 emit(&app, &label, ui_event);
             }
         }
     });
+}
+
+/// Persist the resumable-session facts: `init` upserts the row (taking the
+/// pending title/resumed-from slots set by send_message/resume_session —
+/// the session id doesn't exist yet at those call sites), `result` bumps
+/// last_used_at. Single-row sqlite writes; failures are logged, never
+/// surfaced.
+async fn record_session_event(state: &SharedAppState, workspace_root: &str, event: &AgentEvent) {
+    let Some(store) = &state.store else { return };
+    let outcome = match event {
+        AgentEvent::System(sys) if sys.subtype == "init" => {
+            let Some(session_id) = sys.session_id.clone() else {
+                return;
+            };
+            let title = state.pending_title.lock().expect("pending_title").take();
+            let resumed_from = state
+                .pending_resumed_from
+                .lock()
+                .expect("pending_resumed_from")
+                .take();
+            store
+                .record_session_started(&store::NewSession {
+                    session_id,
+                    workspace_root: workspace_root.to_string(),
+                    model: sys.model.clone(),
+                    title,
+                    resumed_from,
+                })
+                .await
+        }
+        AgentEvent::Result(r) => match &r.session_id {
+            Some(id) => store.touch_session(id).await,
+            None => Ok(()),
+        },
+        _ => Ok(()),
+    };
+    if let Err(e) = outcome {
+        tracing::warn!("session recording failed: {e:#}");
+    }
 }
 
 fn flatten(event: AgentEvent) -> Vec<Value> {

@@ -8,6 +8,7 @@
 mod catalog;
 mod circuit_json;
 mod convert;
+mod frozen;
 mod layout;
 mod model;
 mod pipeline;

@@ -1,5 +1,7 @@
-//! Shared on-disk cache: `~/Library/Caches/etchable/lcsc/v1` (or
-//! `ETCHABLE_CACHE_DIR`). Namespaces carry their own TTL policy:
+//! Shared on-disk cache. The caller owns the location (the app passes
+//! `~/.etchable/cache/lcsc/v1` via `store::paths`; this crate stays a pure
+//! sourcing library with no path policy). Namespaces carry their own TTL
+//! policy:
 //! uuid-addressed `docs/` and `models/` are immutable, `numbers/` lasts a
 //! week, `jlc/` a day, `search/` fifteen minutes (stock freshness is the
 //! whole point of search). Writes are atomic (tmp + rename); `sweep` evicts
@@ -35,17 +37,6 @@ pub struct Hit {
 }
 
 impl Cache {
-    pub fn open_default() -> Result<Self> {
-        let root = match std::env::var_os("ETCHABLE_CACHE_DIR") {
-            Some(dir) => PathBuf::from(dir),
-            None => dirs::cache_dir()
-                .context("no cache directory on this platform")?
-                .join("etchable"),
-        }
-        .join("lcsc/v1");
-        Self::open(&root)
-    }
-
     pub fn open(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)
             .with_context(|| format!("cannot create cache dir {}", root.display()))?;

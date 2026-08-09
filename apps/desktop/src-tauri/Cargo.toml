@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 zen-build = { path = "../../../crates/zen-build" }
+store = { path = "../../../crates/store" }
 agent-proto = { path = "../../../crates/agent-proto" }
 agent-host = { path = "../../../crates/agent-host" }
 mcp = { path = "../../../crates/mcp" }

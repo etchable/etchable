@@ -107,11 +107,13 @@ export default function App() {
         agentRunning={app.agentRunning}
         selection={app.selection}
         sessionInfo={app.sessionInfo}
+        sessions={app.sessions}
         onSend={(t) => void app.sendMessage(t)}
         onRespondPermission={(id, allow) => void app.respondPermission(id, allow)}
         onInterrupt={app.interruptAgent}
         onNewSession={() => void app.newSession()}
         onClearSelection={() => app.setSelection([])}
+        onResumeSession={(id) => void app.resumeSession(id)}
       />
     </div>
   );

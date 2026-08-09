@@ -19,7 +19,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # diodeinc/pcb internal crates, pinned to a release tag. These have no semver
 # promise; only crates/zen-build may depend on them (anti-corruption layer).
-pcb-zen = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 pcb-zen-core = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 pcb-sch = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }
 pcb-eda = { git = "https://github.com/diodeinc/pcb.git", tag = "v0.4.25" }

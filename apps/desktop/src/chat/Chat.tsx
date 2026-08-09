@@ -22,6 +22,7 @@ import {
   Spinner,
 } from "@etchable/ui";
 import type { SessionInfo } from "../state";
+import type { SessionSummary } from "../types";
 import { formatResultFooter, prettyJson, previewInput, type ChatItem } from "./messages";
 import { turnResultOf, useChatRuntime, type TurnResult } from "./runtime";
 
@@ -35,11 +36,14 @@ type ChatProps = {
   agentRunning: boolean;
   selection: string[];
   sessionInfo: SessionInfo | null;
+  /** Resumable sessions for this workspace (newest first). */
+  sessions: SessionSummary[];
   onSend: (text: string) => void;
   onRespondPermission: (requestId: string, allow: boolean) => void;
   onInterrupt: () => void;
   onNewSession: () => void;
   onClearSelection: () => void;
+  onResumeSession: (sessionId: string) => void;
 };
 
 // ---- message parts ---------------------------------------------------------
@@ -343,6 +347,16 @@ export default function Chat(props: ChatProps) {
   // Liveness: cover every silent gap (session spawn, pre-first-token,
   // between tools). Streaming items and in-flight tool rows already show
   // their own activity; everything else gets the Working… row.
+  // Offer to pick up where the user left off: no live session, empty
+  // transcript, and the store remembers one for this workspace.
+  const resumable =
+    !props.sessionInfo &&
+    !props.agentRunning &&
+    props.transcript.length === 0 &&
+    props.sessions.length > 0
+      ? props.sessions[0]
+      : null;
+
   const tail = props.transcript[props.transcript.length - 1];
   const showWorking =
     props.agentRunning &&
@@ -362,8 +376,20 @@ export default function Chat(props: ChatProps) {
           className="scroll-minimal flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-1.5 pt-3"
         >
           <ThreadPrimitive.Empty>
-            <div className="m-auto max-w-[260px] text-center text-xs text-ink/35">
-              Ask about the board — Claude can read the schematic and edit the source.
+            <div className="m-auto flex max-w-[280px] flex-col items-center gap-3 text-center">
+              <div className="text-xs text-ink/35">
+                Ask about the board — Claude can read the schematic and edit the source.
+              </div>
+              {resumable && (
+                <button
+                  type="button"
+                  className="max-w-full cursor-pointer truncate rounded-full border border-sky/40 bg-sky/10 px-3 py-1 text-xxs text-ink/70 transition-colors hover:bg-sky/20"
+                  title={resumable.title ?? resumable.sessionId}
+                  onClick={() => props.onResumeSession(resumable.sessionId)}
+                >
+                  Resume last session{resumable.title ? ` — ${resumable.title}` : ""}
+                </button>
+              )}
             </div>
           </ThreadPrimitive.Empty>
           <ThreadPrimitive.Messages>

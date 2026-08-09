@@ -48,6 +48,8 @@ fn install_from_fixture(root: &Path, code: &str, name: &str) -> zen_build::AddCo
             mpn: converted.meta.mpn.clone(),
             manufacturer: converted.meta.manufacturer.clone(),
             lcsc: Some(code.into()),
+            // C2040 is an Extended part; the class must land in the card.
+            lcsc_basic: Some(false),
             description: None,
             datasheet_url: converted.datasheet.clone(),
             provenance: vec![
@@ -93,6 +95,16 @@ fn fixture_part_installs_loads_and_builds() {
     assert_eq!(
         card.provenance.get("verified"),
         Some(&serde_json::json!(false))
+    );
+    // The JLC class is BOM data: recorded in the card, surfaced by
+    // resolve_parts/get_parts so the user sees the Basic/Extended split.
+    assert!(installed.card_text.contains("basic = false"));
+    assert_eq!(
+        card.part.vendors.get("lcsc"),
+        Some(&zen_build::VendorSel::Lcsc {
+            part: "C2040".into(),
+            basic: Some(false),
+        })
     );
 
     // Wire every io to a net and build the whole board.

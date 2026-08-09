@@ -190,7 +190,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_parts",
-            description: "Resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance. Requires an open etchable project.",
+            description: "The BOM view: resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC, Basic/Extended class) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance and an lcsc_classes summary (every Extended part adds a JLC setup fee). Requires an open etchable project.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -710,11 +710,27 @@ fn get_parts(
         })
         .collect();
 
+    // BOM composition: every Extended part adds a JLC setup fee, so the
+    // Basic/Extended split is a first-class fact of the BOM the user
+    // should see. `unclassified` = LCSC selections whose card doesn't
+    // record the class (or non-LCSC/missing selections).
+    let mut basic = 0usize;
+    let mut extended = 0usize;
+    let mut unclassified = 0usize;
+    for p in &selected {
+        match p.vendors.get("lcsc") {
+            Some(zen_build::VendorSel::Lcsc { basic: Some(true), .. }) => basic += 1,
+            Some(zen_build::VendorSel::Lcsc { basic: Some(false), .. }) => extended += 1,
+            _ => unclassified += 1,
+        }
+    }
+
     let total = selected.len();
     let capped: Vec<_> = selected.into_iter().take(MAX_PARTS).collect();
     ok(json!({
         "parts": capped,
         "total": total,
+        "lcsc_classes": {"basic": basic, "extended": extended, "unclassified": unclassified},
         "truncated": if total > MAX_PARTS { Some(total - MAX_PARTS) } else { None },
         "problems": problems,
     }))

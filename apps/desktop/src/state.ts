@@ -1,7 +1,7 @@
 // Central app state: hydrates from get_state, subscribes to backend events,
 // and exposes actions that wrap the Tauri commands.
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -14,6 +14,7 @@ import type {
   Diag,
   PositionIn,
   ProjectView,
+  SessionSummary,
 } from "./types";
 import { BUILD_PAYLOAD_VERSION } from "./types";
 import { transcriptReducer, type ChatItem } from "./chat/messages";
@@ -35,6 +36,21 @@ export function useEtchable() {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [transcript, dispatchTranscript] = useReducer(transcriptReducer, [] as ChatItem[]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const workspaceRootRef = useRef<string | null>(null);
+
+  // Resumable sessions for this window's workspace (the store hides
+  // resume-superseded ancestors).
+  const refreshSessions = useCallback((root: string | null) => {
+    workspaceRootRef.current = root;
+    if (!root) {
+      setSessions([]);
+      return;
+    }
+    void invoke<SessionSummary[]>("list_sessions", { workspaceRoot: root })
+      .then(setSessions)
+      .catch((err) => console.warn("list_sessions failed", err));
+  }, []);
 
   // ---- hydrate + event subscriptions (StrictMode double-mount safe) --------
 
@@ -74,6 +90,7 @@ export function useEtchable() {
         setSelectionState(s.selection?.paths ?? []);
         setAgentRunning(s.agentRunning);
         setProject(s.project ?? null);
+        refreshSessions(s.workspaceRoot ?? null);
         if (s.build) acceptBuild(s.build);
       })
       .catch((err) => console.error("get_state failed", err));
@@ -107,6 +124,8 @@ export function useEtchable() {
         else if (ev.type === "result") setAgentRunning(false);
         else if (ev.type === "init") {
           setSessionInfo({ sessionId: ev.sessionId, model: ev.model });
+          // The backend just recorded this session — reflect it.
+          refreshSessions(workspaceRootRef.current);
         }
         dispatchTranscript({ type: "agent-event", event: ev });
       }),
@@ -217,6 +236,18 @@ export function useEtchable() {
     void invoke("interrupt_agent").catch(() => {});
   }, []);
 
+  const resumeSession = useCallback(async (sessionId: string) => {
+    dispatchTranscript({ type: "clear" });
+    dispatchTranscript({ type: "system", text: "Resuming previous session…", isError: false });
+    setAgentRunning(true);
+    try {
+      await invoke("resume_session", { sessionId });
+    } catch (err) {
+      setAgentRunning(false);
+      dispatchTranscript({ type: "system", text: String(err), isError: true });
+    }
+  }, []);
+
   const newSession = useCallback(async () => {
     try {
       await invoke("new_session");
@@ -270,6 +301,7 @@ export function useEtchable() {
     selection,
     agentRunning,
     sessionInfo,
+    sessions,
     transcript,
     diagnostics,
     counts,
@@ -284,5 +316,6 @@ export function useEtchable() {
     respondPermission,
     interruptAgent,
     newSession,
+    resumeSession,
   };
 }

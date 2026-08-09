@@ -106,15 +106,28 @@ shared field parser so LCSC cards load with zero problems.
 
 - `search_parts`: local tier (generics + project components; KiCad
   symbol libraries no longer surface) + the LCSC tier with stock, price,
-  class, and a ready-made `add_lcsc_component` hint. Blocked/offline map
-  to actionable statuses, never opaque errors; stale cache serves as
-  fallback.
+  class, and a ready-made `add_lcsc_component` hint. Results are ranked
+  **Basic-first** (in-stock Basic, in-stock Extended, then out-of-stock —
+  stable within groups, applied before the cap so Basic options never fall
+  off). Blocked/offline map to actionable statuses, never opaque errors;
+  stale cache serves as fallback.
 - `get_lcsc_part`: the pre-commit check — identity, ref prefix, class,
   stock, price breaks, MSL, lifecycle, attributes, and the EDA-quality
   probe (`has_symbol/has_footprint/has_3d`, pin/pad counts, first pins).
 - `add_lcsc_component`: fetch → convert → install → datasheet, returning
   the reviewable diff plus provenance and the UNVERIFIED notice.
 - `add_component`: demoted to an escape hatch for user-supplied files.
+
+**Basic-first is policy, and the class is BOM data.** The steering prompt
+tells the agent: if a Basic part with stock satisfies the requirement, use
+it (every Extended part adds a per-part JLC setup fee); pick Extended only
+when no Basic fits, and say which requirement forced it. The chosen class
+persists in the card (`[vendors.lcsc] basic = true/false`, JLC detail
+authoritative with the EasyEDA `JLCPCB Part Class` fallback) — part of the
+project's reviewable text, not tool-call ephemera — and flows through
+`resolve_parts` into `get_parts`, whose payload now carries an
+`lcsc_classes` summary (`{basic, extended, unclassified}`) so the BOM's
+setup-fee exposure is showable to the user at a glance.
 
 The decisive E2E (`crates/mcp/tests/lcsc_e2e.rs`) drives fixture bytes
 through convert → install → `load_project` (zero problems) → a full zen

@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "validate:circuit-json": "node tools/validate-circuit-json.mjs",
     "gen:symbol-geom": "node tools/gen-symbol-geom.mjs",
-    "gen:symbol-geom:check": "node tools/gen-symbol-geom.mjs --check"
+    "gen:symbol-geom:check": "node tools/gen-symbol-geom.mjs --check",
+    "gen:store-types": "node tools/gen-store-types.mjs",
+    "gen:store-types:check": "node tools/gen-store-types.mjs --check"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.11",

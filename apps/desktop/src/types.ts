@@ -1,5 +1,11 @@
 // TypeScript mirrors of the Tauri backend contract. Field names are EXACT.
 
+// ---- Storage DTOs (GENERATED from crates/store via ts-rs) ----------------
+// Regenerate with `pnpm gen:store-types`; CI checks they're in sync.
+
+export type { RecentProject } from "./generated/RecentProject";
+export type { SessionSummary } from "./generated/SessionSummary";
+
 // ---- Build data (snake_case, from "build-finished" event / get_state) ----
 
 /// Bump in lockstep with apps/desktop/src-tauri/src/state.rs::BUILD_PAYLOAD_VERSION.

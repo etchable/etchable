@@ -49,6 +49,9 @@ async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedA
         agent: tokio::sync::Mutex::new(None),
         mcp_config_path: std::sync::OnceLock::new(),
         mcp_server: std::sync::OnceLock::new(),
+        store: registry.store().cloned(),
+        pending_title: std::sync::Mutex::new(None),
+        pending_resumed_from: std::sync::Mutex::new(None),
         stdlib_source: std::sync::OnceLock::new(),
         watcher: std::sync::Mutex::new(None),
     });
@@ -71,7 +74,9 @@ async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedA
         .cloned()
         .unwrap_or_else(std::env::temp_dir);
     std::fs::create_dir_all(&config_dir).map_err(|e| format!("cannot create config dir: {e}"))?;
-    let config_path = config_dir.join(format!("mcp-config-{label}.json"));
+    // Pid-prefixed: two app processes must never clobber each other's
+    // configs (labels restart at app-1 in every process).
+    let config_path = config_dir.join(format!("mcp-config-{}-{label}.json", std::process::id()));
     std::fs::write(&config_path, mcp::mcp_config_json(addr).to_string())
         .map_err(|e| format!("cannot write mcp config: {e}"))?;
     let _ = state.mcp_config_path.set(config_path);
@@ -111,6 +116,22 @@ pub async fn open_board_file(
     entry: PathBuf,
     project: Option<zen_build::ProjectDoc>,
 ) -> Result<BuildSummary, String> {
+    // Record real projects in recents before anything can fail — a broken
+    // build is still a project the user wants back. Bare-.zen opens
+    // (project: None) are the dev path and would pollute recents.
+    if let (Some(store), Some(doc)) = (registry.store(), &project) {
+        if let Err(e) = store
+            .record_project_opened(
+                &doc.root.display().to_string(),
+                &doc.name,
+                doc.board.as_deref(),
+            )
+            .await
+        {
+            tracing::warn!("recents recording failed: {e:#}");
+        }
+    }
+
     if let Some(existing) = registry.find_by_source(&entry) {
         show_project_window(app, &existing.window_label);
         // Re-opening doubles as a refresh.
@@ -356,6 +377,12 @@ pub async fn send_message(
     text: String,
 ) -> CmdResult<()> {
     let state = instance(&registry, &window)?;
+    // If this message is about to spawn a session, it becomes the session's
+    // title — parked here because the session id only exists once the init
+    // event arrives (recorded in agent::pump_events).
+    if state.agent.lock().await.is_none() {
+        *state.pending_title.lock().expect("pending_title") = Some(text.clone());
+    }
     agent::ensure_session(&app, &state, None)
         .await
         .map_err(|e| format!("{e:#}"))?;
@@ -427,6 +454,12 @@ pub async fn resume_session(
             let _ = session.kill().await;
         }
     }
+    // `--resume` forks a NEW session id; this links the fork to its
+    // ancestor so the old row is hidden from listings.
+    *state
+        .pending_resumed_from
+        .lock()
+        .expect("pending_resumed_from") = Some(session_id.clone());
     agent::ensure_session(&app, &state, Some(session_id))
         .await
         .map_err(|e| format!("{e:#}"))
@@ -459,4 +492,73 @@ pub async fn reload_workspace(
         })
         .await
         .map_err(|_| "builder stopped".to_string())
+}
+
+// --- local storage (docs/decisions/0005) -----------------------------------
+// App-global: these resolve through the Registry's store, not a window
+// instance — the dashboard has no instance. All degrade to empty/no-op
+// when the store failed to open.
+
+/// Recently opened projects, newest first (the dashboard's list).
+#[tauri::command]
+pub async fn list_recent_projects(
+    registry: State<'_, Registry>,
+) -> CmdResult<Vec<store::RecentProject>> {
+    match registry.store() {
+        Some(s) => s.recent_projects(20).await.map_err(|e| format!("{e:#}")),
+        None => Ok(Vec::new()),
+    }
+}
+
+#[tauri::command]
+pub async fn remove_recent_project(
+    registry: State<'_, Registry>,
+    root: String,
+) -> CmdResult<()> {
+    match registry.store() {
+        Some(s) => s
+            .remove_recent_project(&root)
+            .await
+            .map_err(|e| format!("{e:#}")),
+        None => Ok(()),
+    }
+}
+
+/// Resumable agent sessions for the given workspace, newest first
+/// (superseded resume-ancestors hidden).
+#[tauri::command]
+pub async fn list_sessions(
+    registry: State<'_, Registry>,
+    workspace_root: String,
+) -> CmdResult<Vec<store::SessionSummary>> {
+    match registry.store() {
+        Some(s) => s
+            .sessions_for(&workspace_root, 20)
+            .await
+            .map_err(|e| format!("{e:#}")),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The whole prefs table (tiny; one invoke hydrates a window).
+#[tauri::command]
+pub async fn get_prefs(
+    registry: State<'_, Registry>,
+) -> CmdResult<std::collections::BTreeMap<String, serde_json::Value>> {
+    match registry.store() {
+        Some(s) => s.get_prefs().await.map_err(|e| format!("{e:#}")),
+        None => Ok(Default::default()),
+    }
+}
+
+#[tauri::command]
+pub async fn set_pref(
+    registry: State<'_, Registry>,
+    key: String,
+    value: serde_json::Value,
+) -> CmdResult<()> {
+    match registry.store() {
+        Some(s) => s.set_pref(&key, &value).await.map_err(|e| format!("{e:#}")),
+        None => Ok(()),
+    }
 }

@@ -7,6 +7,7 @@ description = "Localhost MCP server exposing schematic state + canvas selection 
 [dependencies]
 zen-build = { path = "../zen-build" }
 lcsc = { path = "../lcsc" }
+store = { path = "../store" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

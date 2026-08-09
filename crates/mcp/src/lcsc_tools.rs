@@ -18,7 +18,7 @@ pub const UNVERIFIED_NOTICE: &str = "Converted from EasyEDA CAD data — UNVERIF
 fn cache() -> anyhow::Result<&'static Cache> {
     static CACHE: OnceLock<Option<Cache>> = OnceLock::new();
     CACHE
-        .get_or_init(|| Cache::open_default().ok())
+        .get_or_init(|| Cache::open(&store::paths::cache_dir().join("lcsc/v1")).ok())
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no usable cache directory"))
 }
@@ -46,6 +46,13 @@ fn fetch_error_payload(e: &FetchError) -> Value {
 
 const MAX_LCSC_RESULTS: usize = 12;
 
+/// Basic-first ranking: in-stock Basic parts, then in-stock Extended, then
+/// out-of-stock anything — stable within each group so upstream relevance
+/// survives. Applied BEFORE the result cap so Basic options never fall off.
+pub fn rank_hits(hits: &mut [lcsc::jlc::SearchHit]) {
+    hits.sort_by_key(|h| (h.stock <= 0, h.class != "basic"));
+}
+
 /// The live tier of `search_parts`. Never an error payload — local results
 /// always accompany whatever this returns.
 pub async fn search_tier(query: &str) -> Value {
@@ -54,7 +61,8 @@ pub async fn search_tier(query: &str) -> Value {
         _ => return json!({"status": "error", "hint": "LCSC client unavailable"}),
     };
     match lcsc::jlc::search(client, cache, query).await {
-        Ok(page) => {
+        Ok(mut page) => {
+            rank_hits(&mut page.hits);
             let results: Vec<Value> = page
                 .hits
                 .iter()
@@ -74,7 +82,7 @@ pub async fn search_tier(query: &str) -> Value {
                 "as_of": page.as_of,
                 "cached": page.cached,
                 "results": results,
-                "hint": "Prefer class=basic with healthy stock (extended parts carry a JLC setup fee; stock 0 is unbuildable). Run get_lcsc_part before committing to one.",
+                "hint": "Results are ranked Basic-first. If a class=basic part satisfies the requirement, use it — every Extended part adds a JLC setup fee; pick Extended only when no Basic fits, and tell the user why. Stock 0 is unbuildable. Run get_lcsc_part before committing to one.",
             })
         }
         Err(e) => fetch_error_payload(&e),
@@ -200,6 +208,44 @@ async fn probe_eda(
     }))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(lcsc: &str, class: &str, stock: i64) -> lcsc::jlc::SearchHit {
+        lcsc::jlc::SearchHit {
+            lcsc: lcsc.into(),
+            mpn: String::new(),
+            manufacturer: String::new(),
+            package: String::new(),
+            description: String::new(),
+            class: class.into(),
+            preferred: false,
+            assembly: false,
+            stock,
+            min_qty: 1,
+            unit_price: None,
+            datasheet: None,
+        }
+    }
+
+    #[test]
+    fn ranking_puts_stocked_basic_first_and_stays_stable() {
+        let mut hits = vec![
+            hit("C1", "extended", 100),
+            hit("C2", "basic", 0),
+            hit("C3", "basic", 500),
+            hit("C4", "extended", 50),
+            hit("C5", "basic", 200),
+        ];
+        rank_hits(&mut hits);
+        let order: Vec<&str> = hits.iter().map(|h| h.lcsc.as_str()).collect();
+        // Stocked basics (original relative order), stocked extendeds
+        // (ditto), then out-of-stock.
+        assert_eq!(order, ["C3", "C5", "C1", "C4", "C2"]);
+    }
+}
+
 pub struct AddLcscArgs {
     pub name: String,
     pub lcsc: String,
@@ -242,6 +288,25 @@ pub async fn add_component(
         .map_err(|e| format!("{e:#}"))?
     };
 
+    // JLC library class — the detail endpoint is authoritative, the
+    // EasyEDA `JLCPCB Part Class` c_para is the fallback. Recorded in the
+    // card so the BOM shows Basic vs Extended (setup-fee) composition.
+    let class = raw
+        .jlc_detail
+        .as_ref()
+        .and_then(|d| d.get("componentLibraryType").and_then(Value::as_str))
+        .and_then(|t| match t {
+            "base" => Some("basic".to_string()),
+            "expand" => Some("extended".to_string()),
+            _ => None,
+        })
+        .or_else(|| converted.meta.class.clone());
+    let lcsc_basic = match class.as_deref() {
+        Some("basic") => Some(true),
+        Some("extended") => Some(false),
+        _ => None,
+    };
+
     let easyeda_uuid = raw
         .component
         .get("uuid")
@@ -281,6 +346,7 @@ pub async fn add_component(
         mpn: converted.meta.mpn.clone(),
         manufacturer: converted.meta.manufacturer.clone(),
         lcsc: Some(args.lcsc.clone()),
+        lcsc_basic,
         description: None,
         datasheet_url: converted.datasheet.clone(),
         provenance,
@@ -308,6 +374,7 @@ pub async fn add_component(
 
     Ok(json!({
         "files_written": installed.files_written,
+        "class": class,
         "zen_text": installed.zen_text,
         "card_text": installed.card_text,
         "pin_count": converted.pin_count,

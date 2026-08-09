@@ -125,10 +125,13 @@ fn execute_electrical_check(
     })
 }
 
-/// Discover the workspace containing `path` and resolve its dependencies.
+/// Discover the workspace containing `path` and resolve it with the
+/// dep-less frozen resolver ([`crate::frozen`]). `opts.offline` is accepted
+/// for API stability but resolution itself never touches the network —
+/// remote `[dependencies]` are unsupported by design (decision 0005).
 pub(crate) fn resolve(path: &Path, opts: &crate::OpenOptions) -> Result<ResolutionResult> {
     let file_provider = DefaultFileProvider::new();
-    let mut workspace_info = pcb_zen::get_workspace_info(&file_provider, path)
+    let mut workspace_info = pcb_zen_core::workspace::get_workspace_info(&file_provider, path)
         .with_context(|| format!("failed to discover workspace for {}", path.display()))?;
 
     if !workspace_info.errors.is_empty() {
@@ -139,30 +142,39 @@ pub(crate) fn resolve(path: &Path, opts: &crate::OpenOptions) -> Result<Resoluti
         bail!("invalid pcb.toml file(s):\n{msg}");
     }
 
-    if let Some(source) = &opts.stdlib_source {
-        materialize_bundled_stdlib(&mut workspace_info, source)?;
+    // A project-authored `[patch] stdlib` wins outright; otherwise the
+    // stdlib source is the bundled copy (packaged app) or exe-ancestor
+    // discovery (dev, finds the repo's lib/std).
+    if workspace_info.stdlib_patch_path().is_none() {
+        let source = match &opts.stdlib_source {
+            Some(source) => source.clone(),
+            None => pcb_zen_core::stdlib::native::discover_source().context(
+                "cannot locate the Zener stdlib (lib/std): run ./scripts/fetch-stdlib.sh, \
+                 or launch the packaged app which bundles it",
+            )?,
+        };
+        materialize_stdlib(&mut workspace_info, &source)?;
     }
 
-    pcb_zen::resolve_workspace_dependencies(workspace_info, path, opts.offline)
+    crate::frozen::resolve(workspace_info, path)
 }
 
-/// Materialize an explicitly-provided stdlib into `<root>/.pcb/stdlib` and
-/// point the workspace at it via an in-memory `[patch]` entry.
+/// Materialize a stdlib source into `<root>/.pcb/stdlib` and point the
+/// workspace at it via an in-memory `[patch]` entry.
 ///
-/// Upstream otherwise calls `discover_source()` — a walk up a handful of
-/// ancestors of the executable looking for `lib/std` — which can never
-/// succeed inside an `.app` bundle. It runs *before* upstream's
-/// already-materialized check, so pre-populating the directory alone does
-/// not help; only the patch entry makes it skip discovery. The patch path is
-/// the same `.pcb/stdlib` upstream would have used, so `stdlib_dir()`,
+/// Upstream's materialization lived in `pcb-zen`'s sqlite-backed cache
+/// index and ran `discover_source()` unconditionally — which can never
+/// succeed inside an `.app` bundle. Here the source is explicit and the
+/// patch entry makes the resolver skip discovery entirely. The patch path
+/// is the same `.pcb/stdlib` upstream would have used, so `stdlib_dir()`,
 /// `@stdlib/...` resolution and the agent's Read grant are unchanged.
-fn materialize_bundled_stdlib(
+fn materialize_stdlib(
     workspace_info: &mut pcb_zen_core::workspace::WorkspaceInfo,
     source: &Path,
 ) -> Result<()> {
     anyhow::ensure!(
         source.join("pcb.toml").is_file(),
-        "bundled stdlib at {} has no pcb.toml",
+        "stdlib at {} has no pcb.toml",
         source.display()
     );
     let target = pcb_zen_core::workspace_stdlib_root(&workspace_info.root);

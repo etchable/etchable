@@ -60,6 +60,10 @@ pub struct InstallComponentRequest {
     pub mpn: Option<String>,
     pub manufacturer: Option<String>,
     pub lcsc: Option<String>,
+    /// JLC library class: `Some(true)` = Basic, `Some(false)` = Extended
+    /// (setup fee). Recorded in the card's `[vendors.lcsc]` so the BOM can
+    /// show it; `None` when the class is unknown.
+    pub lcsc_basic: Option<bool>,
     pub description: Option<String>,
     pub datasheet_url: Option<String>,
     /// `[provenance]` entries for the card (string values).
@@ -143,6 +147,7 @@ pub fn add_component(
             mpn: req.mpn.clone(),
             manufacturer: req.manufacturer.clone(),
             lcsc: req.lcsc.clone(),
+            lcsc_basic: None,
             description: req.description.clone(),
             datasheet_url: req.datasheet_url.clone(),
             provenance: Vec::new(),
@@ -299,6 +304,9 @@ pub fn install_component(
     }
     if let Some(v) = &req.lcsc {
         card.push_str(&format!("\n[vendors.lcsc]\npart = {}\n", toml_str(v)));
+        if let Some(basic) = req.lcsc_basic {
+            card.push_str(&format!("basic = {basic}\n"));
+        }
     }
     if !req.provenance.is_empty() {
         card.push_str("\n[provenance]\n");

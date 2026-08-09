@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Button, Input, SelectionBox, Shell, Spinner } from "@etchable/ui";
+import { Button, IconX, Input, SelectionBox, Shell, Spinner } from "@etchable/ui";
+import type { RecentProject } from "./types";
 import { macOverlayChrome } from "./chrome";
 import "./App.css";
 
@@ -14,6 +15,26 @@ export default function Dashboard() {
   const [projectName, setProjectName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recents, setRecents] = useState<RecentProject[]>([]);
+
+  // Recents come from ~/.etchable/state; refresh on mount and whenever the
+  // dashboard comes back into focus (it hides while project windows are up,
+  // and opens recorded meanwhile should show when it returns).
+  const refreshRecents = useCallback(() => {
+    void invoke<RecentProject[]>("list_recent_projects")
+      .then(setRecents)
+      .catch((err) => console.warn("list_recent_projects failed", err));
+  }, []);
+  useEffect(() => {
+    refreshRecents();
+    window.addEventListener("focus", refreshRecents);
+    return () => window.removeEventListener("focus", refreshRecents);
+  }, [refreshRecents]);
+
+  const removeRecent = (root: string) => {
+    setRecents((rs) => rs.filter((r) => r.root !== root));
+    void invoke("remove_recent_project", { root }).catch(() => refreshRecents());
+  };
 
   const run = async (cmd: string, args: Record<string, unknown>) => {
     setBusy(true);
@@ -124,6 +145,40 @@ export default function Dashboard() {
             if (e.key === "Enter") openPasted(pastedPath);
           }}
         />
+        {recents.length > 0 && (
+          <div className="mt-8 w-[420px]">
+            <div className="mb-1.5 px-1 text-xxs font-medium uppercase tracking-wide text-ink/35">
+              Recent projects
+            </div>
+            <div className="flex flex-col gap-0.5">
+              {recents.slice(0, 6).map((r) => (
+                <div
+                  key={r.root}
+                  className="group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 transition-colors hover:bg-ink/4"
+                  onClick={() => {
+                    if (!busy) void run("open_project", { path: r.root });
+                  }}
+                >
+                  <span className="text-xs font-medium">{r.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink/35">
+                    {r.root}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${r.name} from recents`}
+                    className="flex flex-none cursor-pointer text-ink/25 opacity-0 transition-opacity hover:text-ink/55 group-hover:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeRecent(r.root);
+                    }}
+                  >
+                    <IconX size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {busy && (
           <div className="mt-4 flex items-center gap-1.5 font-mono text-[10.5px] text-ink/55">
             <Spinner />

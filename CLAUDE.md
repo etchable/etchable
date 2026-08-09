@@ -33,6 +33,12 @@ the trajectory).
   an anti-corruption layer: nothing `pcb_*` crosses its public API. The git
   tag (`v0.4.25`) and the starlark fork rev in Cargo.toml must always match
   the pcb workspace's own pins — upgrade them together or types won't unify.
+  **`pcb-zen` itself is deliberately NOT a dependency** (decision 0005): its
+  sqlite-backed remote-package resolver is replaced by
+  `zen-build/src/frozen.rs` (workspace + stdlib only; remote
+  `[dependencies]` bail with a clear error). Never re-add pcb-zen — its
+  rusqlite would collide with the store's sqlx over the one
+  `links = "sqlite3"` slot.
 - **Only `agent-proto` knows the stream-json wire format.** It parses
   tolerantly (unknown events → `Unknown`, never dropped). Protocol facts are
   verified against CLI 2.1.220, notably: `--permission-prompt-tool stdio` is
@@ -103,7 +109,11 @@ the trajectory).
   owns the client/cache/converters (fetch/convert split: conversion is pure
   and fixture-tested, network failures map to actionable statuses — never
   opaque errors). `add_component` is the escape hatch for user-supplied
-  files. Installed wrappers emit `Symbol(library="./…")` — the `./` prefix is
+  files. Basic-first is policy: search results rank in-stock Basic parts
+  first, the chosen class persists in the card (`[vendors.lcsc]
+  basic = true/false`), and `get_parts` (the BOM view) summarizes the
+  Basic/Extended split via `lcsc_classes` — keep that chain intact.
+  Installed wrappers emit `Symbol(library="./…")` — the `./` prefix is
   load-bearing (a bare path parses as a package ref); converted symbols
   always carry `Manufacturer_Name`/`Manufacturer_Part_Number` so no
   `part=Part(...)` splice is needed, and the `Footprint` property is exactly
@@ -116,6 +126,17 @@ the trajectory).
   permission cards (the live canvas IS the review loop for edits). Bash
   and anything outside the workspace still prompt. Wired in
   `apps/desktop/src-tauri/src/agent.rs::ensure_session`.
+- Local storage (docs/decisions/0005): everything outside a project lives
+  under `~/.etchable/` (`cache/` disposable, `state/etchable.sqlite3`
+  sea-orm + embedded migrations, `runtime/` per-instance mcp-config
+  scratch) — `crates/store` is the only authority for these paths and the
+  db; the `Registry` opens the Store once at startup and every window
+  instance clones it. Store open failure = run without persistence, NEVER
+  brick or wipe. Session recording lives in `agent::pump_events` (init
+  upserts, result touches; `--resume` forks a new id linked via
+  `resumed_from`). Store DTOs generate `apps/desktop/src/generated/` via
+  ts-rs (`pnpm gen:store-types`; CI runs `--check`) — regenerate instead
+  of hand-editing.
 - Drag-to-move persistence: the viewer's edit event triggers the
   `save_positions` command (save-ALL — every component in one write, which
   is what keeps the layout's all-or-nothing authored rule a non-issue),
