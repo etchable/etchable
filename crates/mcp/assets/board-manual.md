@@ -32,6 +32,26 @@ Zener looks like Python but is not; the schematic is derived, not drawn.
   text-edit them — `set_positions` is the structured writer for that
   layer (batch: pass every move in one call; coordinates match
   `get_circuit_json` centers).
+
+## Generative structure
+
+Zener is Starlark: the source language has comprehensions, `for` loops,
+and helper functions, and the build evaluates them on every save. For
+repeated structure — channel banks, LED arrays, per-rail decoupling,
+resistor ladders — write the loop or helper IN the .zen source instead of
+unrolling instances by hand. The abstraction persists in the file: one
+edit later retunes every channel, and the diff the user reviews says what
+changed instead of repeating it N times.
+
+- Give every generated instance a deterministic name derived from the
+  loop variable (e.g. `"CH" + str(i)`). Instance paths are identity:
+  `# pcb:sch` positions, etch.toml part overrides, and canvas selection
+  all key on them, so unstable names orphan positions and overrides on
+  the next rebuild.
+- Keep generation deterministic — same source, same schematic. Never
+  derive structure from anything outside the source.
+- Reach for a helper function once the same sub-circuit appears twice;
+  prefer a `Module` when it has a meaningful io boundary.
 - Same source always derives the same schematic — there is no hidden
   canvas state to fix by hand; fix the source instead.
 
