@@ -15,8 +15,10 @@
         "label": "dashboard",
         "title": "etchable",
         "url": "index.html",
-        "width": 820,
-        "height": 620,
+        "width": 980,
+        "height": 660,
+        "minWidth": 560,
+        "minHeight": 420,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 15, "y": 24 }

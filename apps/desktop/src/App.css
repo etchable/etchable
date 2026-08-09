@@ -120,7 +120,8 @@ body {
    the shell in thread.tsx); the theme's global sky :focus-visible outline
    must not double up on the textarea. Unlayered on purpose — the theme rule
    is unlayered too, so no Tailwind utility (layered) can override it. */
-.aui-composer-input:focus-visible {
+.aui-composer-input:focus-visible,
+.dash-agent-input:focus-visible {
   outline: none;
 }
 

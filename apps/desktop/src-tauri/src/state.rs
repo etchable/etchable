@@ -57,6 +57,13 @@ pub struct AppState {
     /// so they must outlive the webview: a reload re-materializes the cards
     /// from here (a lost prompt would wedge the session forever).
     pub pending_permissions: std::sync::Mutex<Vec<PendingPermission>>,
+    /// First message for the agent, set by the dashboard's "Sketch it" flow
+    /// and consumed once by the app window's chat after it mounts.
+    pub initial_prompt: std::sync::Mutex<Option<String>>,
+    /// Session to `--resume` when the agent next spawns. Resuming loads the
+    /// history immediately but deliberately does NOT start the CLI — the
+    /// first send does, picking this up.
+    pub resume_target: std::sync::Mutex<Option<String>>,
 }
 
 pub type SharedAppState = Arc<AppState>;

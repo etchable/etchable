@@ -221,12 +221,12 @@ const MCP_ACTIVITY: Record<string, string> = {
   set_positions: "Arranging the canvas…",
   find_empty_space: "Finding open space…",
   get_bom: "Reading the BOM…",
+  get_circuit_json: "Reading the canvas…",
   build: "Rebuilding…",
   list_library: "Browsing the library…",
   search_parts: "Searching parts…",
   get_part: "Checking a part…",
   add_component: "Installing a component…",
-  install_component: "Installing a component…",
   get_symbol_pins: "Reading symbol pins…",
   fetch_datasheet: "Fetching a datasheet…",
   zener_reference: "Reading the Zener guide…",
@@ -240,19 +240,42 @@ function fileBasename(input: unknown): string | null {
   return null;
 }
 
+/** Human name for a project file the agent touches — users think in boards,
+    components, and part cards, not files (docs/product.md: source is an
+    implementation detail). Null for files with no project vocabulary. */
+export function humanFileTarget(path: unknown): string | null {
+  if (typeof path !== "string" || path.length === 0) return null;
+  const parts = path.split("/").filter(Boolean);
+  const base = parts[parts.length - 1] ?? "";
+  const dir = parts[parts.length - 2] ?? "";
+  const stem = base.replace(/\.[^.]+$/, "");
+  if (base === "etch.toml") return "project info";
+  if (base === "pcb.toml") return "the project manifest";
+  if (base.endsWith(".zen")) {
+    if (dir === "components") return `the ${stem} component`;
+    if (stem === "board") return "the board";
+    return `the ${stem} module`;
+  }
+  if (base.endsWith(".toml") && dir === "components") return `${stem}'s part card`;
+  if (dir === "datasheets") return `the ${stem} datasheet`;
+  return null;
+}
+
 /** "What is it doing right now" — the running-tool status line. */
 export function activityLabel(toolName: string, input?: unknown): string {
   if (toolName.startsWith(MCP_PREFIX)) {
     const name = toolName.slice(MCP_PREFIX.length);
     return MCP_ACTIVITY[name] ?? `Using ${name}…`;
   }
-  const file = fileBasename(input);
+  const filePath =
+    input && typeof input === "object" ? (input as Record<string, unknown>).file_path : undefined;
+  const file = humanFileTarget(filePath) ?? fileBasename(input);
   switch (toolName) {
     case "Read":
       return file ? `Reading ${file}…` : "Reading files…";
     case "Edit":
     case "Write":
-      return file ? `Editing ${file}…` : "Editing the source…";
+      return file ? `Editing ${file}…` : "Editing the board…";
     case "Bash":
       return "Running a command…";
     case "Grep":

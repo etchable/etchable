@@ -137,6 +137,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::select_board,
+            commands::sketch_board,
+            commands::take_initial_prompt,
             commands::show_dashboard,
             commands::open_project,
             commands::create_project,

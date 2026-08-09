@@ -55,6 +55,8 @@ async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedA
         stdlib_source: std::sync::OnceLock::new(),
         watcher: std::sync::Mutex::new(None),
         pending_permissions: std::sync::Mutex::new(Vec::new()),
+        initial_prompt: std::sync::Mutex::new(None),
+        resume_target: std::sync::Mutex::new(None),
     });
     if let Some(stdlib) = registry.stdlib_source.get() {
         let _ = state.stdlib_source.set(stdlib.clone());
@@ -182,6 +184,8 @@ fn create_project_window(app: &AppHandle, label: &str) -> Result<(), String> {
         title: "etchable".into(),
         width: 1400.0,
         height: 900.0,
+        min_width: Some(720.0),
+        min_height: Some(480.0),
         hidden_title: true,
         ..Default::default()
     };
@@ -197,6 +201,96 @@ fn create_project_window(app: &AppHandle, label: &str) -> Result<(), String> {
         .build()
         .map_err(|e| format!("cannot create project window: {e}"))?;
     Ok(())
+}
+
+/// "Sketch it": scaffold a project for a described board (auto-named,
+/// under ~/Documents/Etchable), open it, and queue the description as the
+/// agent's first message — consumed by the app window's chat on mount.
+#[tauri::command]
+pub async fn sketch_board(
+    app: AppHandle,
+    registry: State<'_, Registry>,
+    description: String,
+) -> CmdResult<BuildSummary> {
+    let description = description.trim().to_string();
+    if description.is_empty() {
+        return Err("describe the board first".into());
+    }
+
+    let parent = app
+        .path()
+        .document_dir()
+        .map_err(|e| format!("no documents dir: {e}"))?
+        .join("Etchable");
+    std::fs::create_dir_all(&parent).map_err(|e| e.to_string())?;
+
+    let base = slugify(&description);
+    let mut name = base.clone();
+    let mut n = 2;
+    while parent.join(&name).exists() {
+        name = format!("{base}-{n}");
+        n += 1;
+    }
+
+    let result = {
+        let (parent, name) = (parent.clone(), name.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            zen_build::scaffold_project_detailed(&parent, &name)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))?
+    };
+
+    let doc = {
+        let root = result.root.clone();
+        tauri::async_runtime::spawn_blocking(move || zen_build::load_project(&root))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?
+    };
+    let Some(board) = &doc.board else {
+        return Err("scaffold produced no board entry".into());
+    };
+    let entry = doc.root.join(board);
+
+    let summary = open_board_file(&app, &registry, entry.clone(), Some(doc)).await?;
+    if let Some(state) = registry.find_by_source(&entry) {
+        *state.initial_prompt.lock().expect("initial prompt lock") =
+            Some(format!("Sketch this board: {description}"));
+    }
+    Ok(summary)
+}
+
+/// Project-name slug from a board description ("a USB-C power breakout,
+/// 5V at 3A" → "a-usb-c-power-breakout-5v-at-3a").
+fn slugify(desc: &str) -> String {
+    let mut s: String = desc
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    while s.contains("--") {
+        s = s.replace("--", "-");
+    }
+    let s = s.trim_matches('-');
+    let s = if s.len() > 40 {
+        s[..40].trim_end_matches('-')
+    } else {
+        s
+    };
+    if s.is_empty() { "sketch".into() } else { s.to_string() }
+}
+
+/// One-shot pickup of the dashboard's "Sketch it" prompt (see sketch_board).
+#[tauri::command]
+pub fn take_initial_prompt(
+    registry: State<'_, Registry>,
+    window: tauri::WebviewWindow,
+) -> CmdResult<Option<String>> {
+    let state = instance(&registry, &window)?;
+    let taken = state.initial_prompt.lock().expect("initial prompt lock").take();
+    Ok(taken)
 }
 
 /// Open a bare .zen board (advanced/dev path — no project attached).
@@ -408,7 +502,7 @@ pub async fn send_message(
     if state.agent.lock().await.is_none() {
         *state.pending_title.lock().expect("pending_title") = Some(text.clone());
     }
-    agent::ensure_session(&app, &state, None)
+    agent::ensure_session(&app, &state)
         .await
         .map_err(|e| format!("{e:#}"))?;
     let context = agent::selection_context(&state);
@@ -475,14 +569,16 @@ pub async fn new_session(
     Ok(())
 }
 
-/// Resume a previous CLI session by id (rope-style branching comes later).
+/// Resume a previous CLI session: load its history into the chat and arm
+/// `--resume` for the next send. Deliberately does NOT spawn the CLI — the
+/// user may only want to read.
 #[tauri::command]
 pub async fn resume_session(
     app: AppHandle,
     registry: State<'_, Registry>,
     window: tauri::WebviewWindow,
     session_id: String,
-) -> CmdResult<()> {
+) -> CmdResult<Vec<serde_json::Value>> {
     let state = instance(&registry, &window)?;
     {
         let mut guard = state.agent.lock().await;
@@ -490,15 +586,25 @@ pub async fn resume_session(
             let _ = session.kill().await;
         }
     }
+    state
+        .pending_permissions
+        .lock()
+        .expect("pending permissions lock")
+        .clear();
     // `--resume` forks a NEW session id; this links the fork to its
-    // ancestor so the old row is hidden from listings.
+    // ancestor so the old row is hidden from listings (consumed when the
+    // next send actually spawns).
     *state
         .pending_resumed_from
         .lock()
         .expect("pending_resumed_from") = Some(session_id.clone());
-    agent::ensure_session(&app, &state, Some(session_id))
-        .await
-        .map_err(|e| format!("{e:#}"))
+    *state.resume_target.lock().expect("resume target lock") = Some(session_id.clone());
+
+    let root = state
+        .canvas
+        .read(|s| s.workspace_root.clone())
+        .ok_or("no workspace open")?;
+    agent::load_session_history(&app, &root, &session_id)
 }
 
 /// Force a rebuild (the UI's refresh button).

@@ -113,6 +113,9 @@ export type BackendState = {
 
 export type AgentEvent =
   | { type: "init"; sessionId?: string; model?: string }
+  /** Only in replayed session history (load_session_history) — live user
+      turns come from the composer, not the wire. */
+  | { type: "user_text"; text: string }
   | { type: "assistant_text"; text: string }
   | { type: "stream_delta"; text: string }
   | { type: "thinking"; text: string }

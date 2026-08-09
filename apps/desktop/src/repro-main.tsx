@@ -95,6 +95,30 @@ const TURN: ChatItem[] = [
   },
   {
     kind: "tool",
+    id: 15,
+    toolUseId: "t9",
+    name: "Edit",
+    input: { file_path: "/Users/rose/Desktop/Demo/components/led.zen", old_string: "a", new_string: "b" },
+    result: { content: "ok", isError: false },
+  },
+  {
+    kind: "tool",
+    id: 16,
+    toolUseId: "t10",
+    name: "Edit",
+    input: { file_path: "/Users/rose/Desktop/Demo/etch.toml", old_string: "a", new_string: "b" },
+    result: { content: "ok", isError: false },
+  },
+  {
+    kind: "tool",
+    id: 17,
+    toolUseId: "t11",
+    name: "Read",
+    input: { file_path: "/Users/rose/Desktop/Demo/datasheets/ch340c.pdf" },
+    result: { content: "(pdf)", isError: false },
+  },
+  {
+    kind: "tool",
     id: 12,
     toolUseId: "t8",
     name: "Bash",
@@ -112,6 +136,22 @@ const WORKING: ChatItem[] = [{ kind: "user", id: 1, text: "Add a status LED" }];
 const TOOLS: ChatItem[] = [
   { kind: "user", id: 1, text: "Add a status LED" },
   { kind: "agent", id: 2, text: "Let me look at the board first.", streaming: false },
+  {
+    kind: "tool",
+    id: 20,
+    toolUseId: "t20",
+    name: "mcp__etchable__get_board_state",
+    input: {},
+    result: { content: "ok", isError: false },
+  },
+  {
+    kind: "tool",
+    id: 21,
+    toolUseId: "t21",
+    name: "mcp__etchable__check_layout",
+    input: {},
+    result: { content: "no overlaps", isError: false },
+  },
   {
     kind: "tool",
     id: 3,
@@ -234,6 +274,43 @@ function ShellRepro() {
   );
 }
 
+// ?state=resume mirrors the resume-last-session click: a system notice with
+// the agent spinning up.
+const RESUME: ChatItem[] = [
+  { kind: "system", id: 1, text: "Resuming previous session…", isError: false },
+];
+
+// ?state=sourcing mirrors a part-sourcing burst (should stack to 3 rows).
+const SOURCING: ChatItem[] = (() => {
+  const items: ChatItem[] = [{ kind: "user", id: 1, text: "Source the parts" }];
+  let id = 2;
+  const check = (c: string) =>
+    items.push({
+      kind: "tool",
+      id: id++,
+      toolUseId: `t${id}`,
+      name: "mcp__etchable__get_part",
+      input: { lcsc: c },
+      result: { content: "ok", isError: false },
+    });
+  const install = (name: string, lcsc: string) =>
+    items.push({
+      kind: "tool",
+      id: id++,
+      toolUseId: `t${id}`,
+      name: "mcp__etchable__add_component",
+      input: { name, lcsc },
+      result: { content: "ok", isError: false },
+    });
+  ["C16581", "C2682616", "C165948", "C131337"].forEach(check);
+  install("TP4056", "C16581");
+  install("MAX17048", "C2682616");
+  install("USB_C_Receptacle", "C165948");
+  install("JST_PH_2", "C131337");
+  ["C1591", "C19702", "C23186", "C21190", "C22975", "C25804", "C2286", "C72043"].forEach(check);
+  return items;
+})();
+
 function Repro() {
   const state = new URLSearchParams(location.search).get("state");
   if (state === "canvas") {
@@ -255,11 +332,15 @@ function Repro() {
     working: WORKING,
     tools: TOOLS,
     permission: PERMISSION,
+    resume: RESUME,
+    sourcing: SOURCING,
   };
   return (
     <Chat
       transcript={transcripts[state ?? ""] ?? []}
-      agentRunning={state === "working" || state === "tools" || state === "permission"}
+      agentRunning={
+        state === "working" || state === "tools" || state === "permission" || state === "resume"
+      }
       sessions={[]}
       onResumeSession={() => {}}
       selection={[]}

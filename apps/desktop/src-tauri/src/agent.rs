@@ -24,15 +24,18 @@ fn system_prompt_suffix() -> String {
     format!("{SYSTEM_PROMPT_PREAMBLE}\n\n{}", mcp::BOARD_MANUAL)
 }
 
-pub async fn ensure_session(
-    app: &AppHandle,
-    state: &SharedAppState,
-    resume: Option<String>,
-) -> Result<()> {
+pub async fn ensure_session(app: &AppHandle, state: &SharedAppState) -> Result<()> {
     let mut guard = state.agent.lock().await;
     if guard.is_some() {
         return Ok(());
     }
+    // A prior "resume last session" click parks the id here; the spawn
+    // that actually continues the conversation picks it up.
+    let resume = state
+        .resume_target
+        .lock()
+        .expect("resume target lock")
+        .take();
 
     let cwd = state
         .canvas
@@ -297,6 +300,116 @@ fn flatten(event: AgentEvent) -> Vec<Value> {
             vec![]
         }
     }
+}
+
+/// Parse a CLI session file (~/.claude/projects/<munged-cwd>/<id>.jsonl)
+/// into the same flat UI events `flatten()` produces, plus `user_text` for
+/// the user's own turns — so "resume last session" can rebuild the chat
+/// without spawning the CLI.
+pub fn load_session_history(
+    app: &AppHandle,
+    workspace_root: &std::path::Path,
+    session_id: &str,
+) -> Result<Vec<Value>, String> {
+    use tauri::Manager;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    // The CLI munges the cwd into a directory name: every non-alphanumeric
+    // byte becomes '-'.
+    let munged: String = workspace_root
+        .display()
+        .to_string()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let path = home
+        .join(".claude")
+        .join("projects")
+        .join(&munged)
+        .join(format!("{session_id}.jsonl"));
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read session history ({}): {e}", path.display()))?;
+
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("isSidechain").and_then(Value::as_bool) == Some(true)
+            || v.get("isMeta").and_then(Value::as_bool) == Some(true)
+        {
+            continue;
+        }
+        match v.get("type").and_then(Value::as_str) {
+            Some("user") => match v.pointer("/message/content") {
+                Some(Value::String(s)) => {
+                    // Bare-string user content; '<'-prefixed entries are
+                    // harness meta (<command-name>, <local-command-stdout>).
+                    if !s.is_empty() && !s.starts_with('<') {
+                        out.push(json!({"type": "user_text", "text": s}));
+                    }
+                }
+                Some(Value::Array(blocks)) => {
+                    let mut texts: Vec<&str> = Vec::new();
+                    for b in blocks {
+                        match b.get("type").and_then(Value::as_str) {
+                            Some("text") => {
+                                if let Some(s) = b.get("text").and_then(Value::as_str) {
+                                    if !s.starts_with('<') {
+                                        texts.push(s);
+                                    }
+                                }
+                            }
+                            Some("tool_result") => out.push(json!({
+                                "type": "tool_result",
+                                "toolUseId": b.get("tool_use_id").cloned().unwrap_or(Value::Null),
+                                "content": preview_tool_result(
+                                    b.get("content").unwrap_or(&Value::Null)
+                                ),
+                                "isError": b.get("is_error").and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                            })),
+                            _ => {}
+                        }
+                    }
+                    if !texts.is_empty() {
+                        out.push(json!({"type": "user_text", "text": texts.join("\n")}));
+                    }
+                }
+                _ => {}
+            },
+            Some("assistant") => {
+                if let Some(Value::Array(blocks)) = v.pointer("/message/content") {
+                    for b in blocks {
+                        match b.get("type").and_then(Value::as_str) {
+                            Some("text") => {
+                                if let Some(s) = b.get("text").and_then(Value::as_str) {
+                                    if !s.is_empty() {
+                                        out.push(json!({"type": "assistant_text", "text": s}));
+                                    }
+                                }
+                            }
+                            Some("thinking") => {
+                                if let Some(s) = b.get("thinking").and_then(Value::as_str) {
+                                    if !s.is_empty() {
+                                        out.push(json!({"type": "thinking", "text": s}));
+                                    }
+                                }
+                            }
+                            Some("tool_use") => out.push(json!({
+                                "type": "tool_use",
+                                "id": b.get("id").cloned().unwrap_or(Value::Null),
+                                "name": b.get("name").cloned().unwrap_or(Value::Null),
+                                "input": b.get("input").cloned().unwrap_or(Value::Null),
+                            })),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 /// Tool results can be huge (file dumps); the chat row only needs a preview.

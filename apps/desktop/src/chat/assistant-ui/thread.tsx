@@ -1,8 +1,9 @@
 // Vendored from the assistant-ui shadcn registry (thread), adapted for
 // etchable: no attachments/dictation/branching/edit (the embedded-agent
 // runtime supports none of them), Phosphor icons, system-message rows, a
-// per-turn cost/duration footer, and two composer slots (selection-context
-// chip + session controls) threaded in from Chat.tsx.
+// per-turn cost/duration footer, and slots threaded in from Chat.tsx: a
+// panel header (session title / chat picker) plus two composer slots
+// (selection-context chip + session controls).
 
 import { MarkdownText } from "./markdown-text";
 import {
@@ -18,9 +19,9 @@ import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   AnsweredApprovalRow,
   ApprovalRow,
-  GuardedWorkRow,
   PlanRow,
   PulseDots,
+  RunAwareWorkRow,
   WorkingTimer,
 } from "./work-log";
 import { cn } from "../ui/utils";
@@ -49,6 +50,8 @@ import { activityLabel, formatResultFooter } from "../messages";
 import { isPlanTool, turnResultOf, turnStartedAtOf } from "../runtime";
 
 export type ThreadProps = {
+  /** Rendered centered in the panel header (session title / chat picker). */
+  header?: ReactNode;
   /** Rendered inside the composer shell, above the input (selection chip). */
   composerAccessory?: ReactNode;
   /** Rendered in the composer's action row, start side (model, new session). */
@@ -74,6 +77,7 @@ export const Thread: FC<ThreadProps> = (slots) => {
 };
 
 const ThreadRoot: FC = () => {
+  const { header } = useContext(ThreadSlotsContext);
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
@@ -81,6 +85,18 @@ const ThreadRoot: FC = () => {
         ["--composer-radius" as string]: "20px",
       }}
     >
+      {/* Panel header on the same surface as the thread, so the chat reads
+          as one sheet; the fade strip under it dissolves scrolling content
+          into the background instead of clipping it. Placeholder title until
+          the header grows real controls. */}
+      <div className="relative z-10 flex-none bg-background">
+        {/* h-11 = the Shell titlebar's 44px (theme.css .shell-titlebar), so
+            the panel header lines up with the window chrome. */}
+        <div className="flex h-11 items-center justify-center text-xs font-medium text-ink/65">
+          {header ?? "Chat"}
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 top-full h-3 bg-[linear-gradient(to_bottom,var(--color-background),transparent)]" />
+      </div>
       {/* overflow-x-HIDDEN on purpose: the panel must never scroll
           horizontally — wide content (code blocks, tool output) scrolls
           inside its own container. An auto x-scrollbar here makes the whole
@@ -94,7 +110,11 @@ const ThreadRoot: FC = () => {
         data-slot="aui_thread-viewport"
         className="scroll-minimal relative flex flex-1 flex-col overflow-x-hidden overflow-y-scroll scroll-smooth"
       >
-        <div className="mx-auto flex w-full flex-1 flex-col px-2.5 pt-3">
+        {/* Asymmetric padding on purpose: the always-on scroll-minimal
+            scrollbar (6px, classic mode — styling ::-webkit-scrollbar opts
+            out of overlay bars) occupies the right edge, so pr-1 + 6px
+            matches pl-2.5 visually. */}
+        <div className="mx-auto flex w-full flex-1 flex-col pl-2.5 pr-1 pt-3">
           {/* Empty thread: welcome + starter chips centered in the space
               above the bottom-docked composer. */}
           <AuiIf condition={isNewChatView}>
@@ -320,7 +340,7 @@ const AssistantMessage: FC = () => {
                 }
                 // Task/todo calls feed the plan bar, not rows.
                 if (isPlanTool(part.toolName)) return null;
-                return <GuardedWorkRow {...part} />;
+                return <RunAwareWorkRow {...part} />;
               case "indicator":
                 return <WorkingIndicator />;
               default:
@@ -473,16 +493,17 @@ const UserMessage: FC = () => {
   );
 };
 
-/** Backend/system notices: session errors, interrupts. */
+/** Backend/system notices: session errors, interrupts. Selectors return
+    PRIMITIVES on purpose — a fresh object from a useAuiState selector is an
+    unstable getSnapshot and loops React into "maximum update depth". */
 const SystemMessage: FC = () => {
-  const { text, isError } = useAuiState((s) => {
+  const text = useAuiState((s) => {
     const part = s.message.content[0];
-    return {
-      text: part?.type === "text" ? part.text : "",
-      isError:
-        ((s.message.metadata?.custom as { isError?: boolean } | undefined)?.isError ?? false),
-    };
+    return part?.type === "text" ? part.text : "";
   });
+  const isError = useAuiState(
+    (s) => (s.message.metadata?.custom as { isError?: boolean } | undefined)?.isError ?? false,
+  );
   return (
     <MessagePrimitive.Root data-role="system">
       <div

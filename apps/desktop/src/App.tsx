@@ -1,8 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   Button,
-  IconCheck,
   IconSquaresFour,
   IconX,
   Shell,
@@ -20,21 +18,6 @@ import "./App.css";
     fallback. */
 export default function App() {
   const app = useEtchable();
-
-  const pickProject = async () => {
-    try {
-      // Projects are identified by etchable.toml; pick the manifest file
-      // (extension-only filtering — the backend validates the name).
-      const picked = await open({
-        multiple: false,
-        title: "Open a project (etchable.toml)",
-        filters: [{ name: "etchable project", extensions: ["toml"] }],
-      });
-      if (typeof picked === "string") void app.openProject(picked);
-    } catch (err) {
-      console.error("open dialog failed", err);
-    }
-  };
 
   const showDashboard = () => {
     void invoke("show_dashboard").catch((err) =>
@@ -81,24 +64,11 @@ export default function App() {
           <Spinner />
           building…
         </span>
-      ) : build ? (
-        counts.errors > 0 ? (
-          <span className={`${pill} bg-alert/10 text-alert`}>
-            <IconX size={11} /> {counts.errors} error{counts.errors === 1 ? "" : "s"}
-          </span>
-        ) : (
-          <span className={`${pill} bg-leaf/10 text-leaf-deep`}>
-            <IconCheck size={11} /> {counts.components} component
-            {counts.components === 1 ? "" : "s"}
-          </span>
-        )
+      ) : build && counts.errors > 0 ? (
+        <span className={`${pill} bg-alert/10 text-alert`}>
+          <IconX size={11} /> {counts.errors} error{counts.errors === 1 ? "" : "s"}
+        </span>
       ) : null}
-      <Button variant="ghost" size="sm" disabled={!source || building} onClick={() => void app.rebuild()}>
-        Rebuild
-      </Button>
-      <Button variant="copper" size="sm" onClick={() => void pickProject()}>
-        Open project…
-      </Button>
     </div>
   );
 

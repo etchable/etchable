@@ -178,10 +178,16 @@
 }
 .shell-right-wrap {
   width: var(--shell-right-w);
-  /* Flipped so the same left-anchored mask math serves both sides; the
-     inner wrapper flips the content back. */
-  transform: scale(-1, 1);
-  transform-origin: center;
+  /* Right-anchor by layout, NOT by the old scale(-1,1) wrap/inner mirror
+     pair. The mirrors were position-equivalent in exact math, but their
+     parameters (origin = width/2, fractional drag widths) changed every
+     frame of a seam drag, and WKWebView re-rasterizes content through
+     changing transforms at a different subpixel phase each frame — the
+     panel's text visibly shimmered whenever the column narrowed past the
+     panel minimum. Plain flex-end anchoring keeps the content's raster
+     inputs constant; only the clip/mask edge moves. Don't reintroduce
+     transforms on this subtree. */
+  align-items: flex-end;
 }
 .shell-left-wrap.shell-animate,
 .shell-right-wrap.shell-animate {
@@ -222,17 +228,19 @@
   width: max(100%, var(--shell-right-style-w));
   min-width: var(--shell-right-min);
   contain-intrinsic-width: max(100%, var(--shell-right-style-w));
+  /* Right-anchored mask (and a mirrored soft tile — the shared one fades
+     the wrong way for this side). */
+  mask-image: linear-gradient(to right, black 0, black 100%),
+    url(data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4NCjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2aWV3Qm94PSIwIDAgNTAwIDUwMCIgd2lkdGg9IjUwMHB4IiBoZWlnaHQ9IjUwMHB4Ij4NCiAgICA8ZGVmcz4NCiAgICAgICAgPGxpbmVhckdyYWRpZW50IGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIiB4MT0iMjUwIiB5MT0iMCIgeDI9IjI1MCIgeTI9IjUwMCIgaWQ9ImdyYWRpZW50LTAiPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjogcmdiKDAsIDAsIDApOyBzdG9wLW9wYWNpdHk6IDA7IiAvPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjogcmdiKDAlIDAlIDAlKSIgLz4NCiAgICAgICAgPC9saW5lYXJHcmFkaWVudD4NCiAgICA8L2RlZnM+DQogICAgPHJlY3Qgd2lkdGg9IjUwMCIgaGVpZ2h0PSI1MDAiIHN0eWxlPSJmaWxsOiB1cmwoI2dyYWRpZW50LTApOyIgaWQ9Im9iamVjdC0wIiB0cmFuc2Zvcm09InJvdGF0ZSgtOTApIiB0cmFuc2Zvcm0tb3JpZ2luPSI1MCUgNTAlIi8+DQo8L3N2Zz4=);
   mask-position:
-    0rem 0rem,
-    var(--shell-right-style-w) 0rem;
+    right 0rem top 0rem,
+    right var(--shell-right-style-w) top 0rem;
   mask-size:
     var(--shell-right-style-w) 100%,
     2rem 2rem;
 }
 .shell-right-inner {
   min-width: var(--shell-right-min);
-  transform: scale(-1, 1);
-  transform-origin: center;
 }
 .shell-left-wrap.shell-animate .shell-left {
   mask-size:

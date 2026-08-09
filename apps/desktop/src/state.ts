@@ -112,6 +112,14 @@ export function useEtchable() {
           });
         }
         if (pending.length > 0) setAgentRunning(true);
+        // The dashboard's "Sketch it" flow queues the agent's first message
+        // on the backend; pick it up exactly once and send it through the
+        // normal path (user bubble + spawn included).
+        void invoke<string | null>("take_initial_prompt")
+          .then((prompt) => {
+            if (!disposed && prompt) void sendMessage(prompt);
+          })
+          .catch(() => {});
       })
       .catch((err) => console.error("get_state failed", err));
 
@@ -256,14 +264,23 @@ export function useEtchable() {
     void invoke("interrupt_agent").catch(() => {});
   }, []);
 
+  // Loads the old conversation and arms `--resume` for the next send — the
+  // CLI deliberately does NOT spawn (the user may only want to read).
   const resumeSession = useCallback(async (sessionId: string) => {
     dispatchTranscript({ type: "clear" });
-    dispatchTranscript({ type: "system", text: "Resuming previous session…", isError: false });
-    setAgentRunning(true);
     try {
-      await invoke("resume_session", { sessionId });
+      const events = await invoke<AgentEvent[]>("resume_session", { sessionId });
+      for (const ev of events) {
+        if (ev.type === "user_text") {
+          dispatchTranscript({ type: "user", text: ev.text });
+        } else {
+          dispatchTranscript({ type: "agent-event", event: ev });
+        }
+      }
+      // Marks the thread as attached to a session so the resume chip goes
+      // away; the model name fills in from init when the CLI first spawns.
+      setSessionInfo({ sessionId });
     } catch (err) {
-      setAgentRunning(false);
       dispatchTranscript({ type: "system", text: String(err), isError: true });
     }
   }, []);

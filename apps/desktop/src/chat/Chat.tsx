@@ -1,11 +1,24 @@
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import { IconCrosshair, IconPlus, IconX } from "@etchable/ui";
+import {
+  IconCheck,
+  IconChevronDown,
+  IconCrosshair,
+  IconPlus,
+  IconX,
+} from "@etchable/ui";
 import type { SessionInfo } from "../state";
 import type { SessionSummary } from "../types";
 import type { ChatItem } from "./messages";
 import { useChatRuntime } from "./runtime";
 import { Thread } from "./assistant-ui/thread";
 import { TooltipIconButton } from "./assistant-ui/tooltip-icon-button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 const SUGGESTIONS = [
   "What does this board do?",
@@ -60,6 +73,72 @@ function SelectionChip({
   );
 }
 
+/** The conversation's display name: its opening question. The store keeps
+    the same fact per session (SessionSummary.title, set once at init), so
+    live derivation and the picker's list agree. */
+function deriveTitle(transcript: ChatItem[]): string | null {
+  const first = transcript.find((i) => i.kind === "user");
+  const text = first?.text.replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+/** Header title-as-menu: current chat name, click to switch chats or start
+    a new one. Resume kills any live agent backend-side, so switching is
+    always safe. */
+function SessionMenu({
+  title,
+  sessions,
+  currentSessionId,
+  onNewSession,
+  onResumeSession,
+}: {
+  title: string | null;
+  sessions: SessionSummary[];
+  currentSessionId: string | null;
+  onNewSession: () => void;
+  onResumeSession: (sessionId: string) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="group flex max-w-[75%] cursor-pointer items-center gap-1 rounded-md px-2 py-1 outline-none hover:bg-ink/5 data-[state=open]:bg-ink/5">
+        <span className="truncate">{title ?? "New chat"}</span>
+        <IconChevronDown
+          size={11}
+          className="flex-none text-ink/40 transition-transform group-data-[state=open]:rotate-180"
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center">
+        <DropdownMenuItem onSelect={onNewSession}>
+          <IconPlus size={12} className="flex-none text-ink/55" />
+          New chat
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {sessions.length === 0 ? (
+          <div className="px-2 py-1.5 text-xxs text-ink/40">
+            No previous chats
+          </div>
+        ) : (
+          sessions.map((s) => (
+            <DropdownMenuItem
+              key={s.sessionId}
+              onSelect={() => {
+                if (s.sessionId !== currentSessionId) onResumeSession(s.sessionId);
+              }}
+            >
+              <span className="min-w-0 flex-1 truncate">
+                {s.title ?? "Untitled chat"}
+              </span>
+              {s.sessionId === currentSessionId && (
+                <IconCheck size={12} className="flex-none text-copper" />
+              )}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function SessionControls({
   sessionInfo,
   onNewSession,
@@ -104,6 +183,15 @@ export default function Chat(props: ChatProps) {
     <AssistantRuntimeProvider runtime={runtime}>
       <Thread
         suggestions={SUGGESTIONS}
+        header={
+          <SessionMenu
+            title={deriveTitle(props.transcript)}
+            sessions={props.sessions}
+            currentSessionId={props.sessionInfo?.sessionId ?? null}
+            onNewSession={props.onNewSession}
+            onResumeSession={props.onResumeSession}
+          />
+        }
         // Before the init event there is no session yet — the spawn is the
         // slow part worth naming. After that, silent gaps are the model
         // working (for current models: redacted thinking).

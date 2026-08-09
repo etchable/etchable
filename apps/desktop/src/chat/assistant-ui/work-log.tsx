@@ -29,7 +29,7 @@ import {
 import { useAuiState, type ToolCallMessagePartProps } from "@assistant-ui/react";
 import { Button } from "../ui/button";
 import { cn } from "../ui/utils";
-import { MCP_PREFIX, previewInput, prettyJson } from "../messages";
+import { MCP_PREFIX, humanFileTarget, previewInput, prettyJson } from "../messages";
 import { turnPlanOf, type PlanStep } from "../runtime";
 
 // ---- tool display -----------------------------------------------------------
@@ -45,6 +45,9 @@ type ToolDisplay = {
   /** The full thing being acted on (command/path/query) — shown by the
       approval card; JSON only as fallback. Work rows don't render it. */
   detail?: string;
+  /** Consecutive calls of this tool collapse into ONE row: the constant
+      heading plus each call's token joined ("Read up on parts · C1, C2"). */
+  stack?: { heading: string; headingActive: string; token: string };
 };
 
 const str = (v: unknown): string | undefined =>
@@ -88,6 +91,7 @@ const MCP_DISPLAY: Record<
     active: "Finding open space",
   },
   get_bom: { icon: MagnifyingGlass, heading: "Read the BOM", active: "Reading the BOM" },
+  get_circuit_json: { icon: Circuitry, heading: "Read the canvas", active: "Reading the canvas" },
   build: { icon: Hammer, heading: "Rebuilt the board", active: "Rebuilding the board" },
   list_library: {
     icon: MagnifyingGlass,
@@ -124,16 +128,10 @@ const MCP_DISPLAY: Record<
     heading: "Read symbol pins",
     active: "Reading symbol pins",
   },
-  fetch_datasheet: {
-    icon: FileText,
-    heading: "Fetched datasheet",
-    active: "Fetching datasheet",
-  },
   zener_reference: {
     icon: FileText,
-    heading: "Read Zener guide",
-    active: "Reading Zener guide",
-    arg: "topic",
+    heading: "Read the Zener guide",
+    active: "Reading the Zener guide",
   },
 };
 
@@ -142,6 +140,63 @@ export function toolDisplay(toolName: string, args: unknown): ToolDisplay {
 
   if (toolName.startsWith(MCP_PREFIX)) {
     const name = toolName.slice(MCP_PREFIX.length);
+    // Part-sourcing tools carry the part identity — bake it into the
+    // heading so the row explains itself ("Installed the ch340c component").
+    switch (name) {
+      case "get_lcsc_part": {
+        const c = str(a.lcsc) ?? "";
+        return {
+          icon: MagnifyingGlass,
+          heading: "Read up on a part",
+          headingActive: "Reading up on a part",
+          preview: c,
+          detail: prettyJson(args),
+          stack: { heading: "Read up on parts", headingActive: "Reading up on parts", token: c },
+        };
+      }
+      case "add_lcsc_component":
+      case "add_component": {
+        const n = str(a.name);
+        return {
+          icon: PuzzlePiece,
+          heading: n ? `Installed the ${n} component` : "Installed a component",
+          headingActive: n ? `Installing the ${n} component` : "Installing a component",
+          preview: str(a.lcsc) ?? "",
+          detail: prettyJson(args),
+          stack: {
+            heading: "Installed components",
+            headingActive: "Installing components",
+            token: n ?? str(a.lcsc) ?? "",
+          },
+        };
+      }
+      case "fetch_datasheet": {
+        const n = str(a.component);
+        return {
+          icon: FileText,
+          heading: n ? `Fetched the ${n} datasheet` : "Fetched a datasheet",
+          headingActive: n ? `Fetching the ${n} datasheet` : "Fetching a datasheet",
+          preview: "",
+          detail: prettyJson(args),
+          stack: {
+            heading: "Fetched datasheets",
+            headingActive: "Fetching datasheets",
+            token: n ?? "",
+          },
+        };
+      }
+      case "search_parts": {
+        const q = str(a.query) ?? "";
+        return {
+          icon: MagnifyingGlass,
+          heading: "Searched parts",
+          headingActive: "Searching parts",
+          preview: q,
+          detail: prettyJson(args),
+          stack: { heading: "Searched parts", headingActive: "Searching parts", token: q },
+        };
+      }
+    }
     const known = MCP_DISPLAY[name];
     if (known) {
       const preview = (known.arg && str(a[known.arg])) ?? "";
@@ -157,32 +212,47 @@ export function toolDisplay(toolName: string, args: unknown): ToolDisplay {
   }
 
   switch (toolName) {
-    case "Read":
+    case "Read": {
+      const target = humanFileTarget(a.file_path);
+      const token = target ?? basename(str(a.file_path)) ?? "";
       return {
         icon: FileText,
-        heading: "Read",
-        headingActive: "Reading",
-        preview: basename(str(a.file_path)) ?? "",
+        heading: target ? `Read ${target}` : "Read",
+        headingActive: target ? `Reading ${target}` : "Reading",
+        // Recognized project files speak the app's vocabulary — no
+        // filenames (source is an implementation detail).
+        preview: target ? "" : (basename(str(a.file_path)) ?? ""),
         detail: str(a.file_path),
+        stack: { heading: "Read", headingActive: "Reading", token },
       };
+    }
     case "Edit":
-    case "MultiEdit":
+    case "MultiEdit": {
+      const target = humanFileTarget(a.file_path);
+      const token = target ?? basename(str(a.file_path)) ?? "";
       return {
         icon: PencilSimple,
-        heading: "Edited",
-        headingActive: "Editing",
-        preview: basename(str(a.file_path)) ?? "",
+        heading: target ? `Edited ${target}` : "Edited",
+        headingActive: target ? `Editing ${target}` : "Editing",
+        preview: target ? "" : (basename(str(a.file_path)) ?? ""),
         detail: str(a.file_path),
+        stack: { heading: "Edited", headingActive: "Editing", token },
       };
+    }
     case "Write":
-    case "NotebookEdit":
+    case "NotebookEdit": {
+      const path = str(a.file_path) ?? str(a.notebook_path);
+      const target = humanFileTarget(path);
+      const token = target ?? basename(path) ?? "";
       return {
         icon: PencilSimple,
-        heading: "Wrote",
-        headingActive: "Writing",
-        preview: basename(str(a.file_path) ?? str(a.notebook_path)) ?? "",
-        detail: str(a.file_path) ?? str(a.notebook_path),
+        heading: target ? `Wrote ${target}` : "Wrote",
+        headingActive: target ? `Writing ${target}` : "Writing",
+        preview: target ? "" : (basename(path) ?? ""),
+        detail: path,
+        stack: { heading: "Wrote", headingActive: "Writing", token },
       };
+    }
     case "Bash":
       return {
         icon: Terminal,
@@ -192,14 +262,17 @@ export function toolDisplay(toolName: string, args: unknown): ToolDisplay {
         detail: str(a.command),
       };
     case "Grep":
-    case "Glob":
+    case "Glob": {
+      const q = str(a.pattern) ?? "";
       return {
         icon: MagnifyingGlass,
         heading: "Searched",
         headingActive: "Searching",
-        preview: str(a.pattern) ?? "",
-        detail: str(a.pattern),
+        preview: q,
+        detail: q,
+        stack: { heading: "Searched", headingActive: "Searching", token: q },
       };
+    }
     case "WebFetch": {
       let host = str(a.url) ?? "";
       try {
@@ -224,7 +297,12 @@ export function toolDisplay(toolName: string, args: unknown): ToolDisplay {
         detail: str(a.query),
       };
     case "ToolSearch":
-      return { icon: MagnifyingGlass, heading: "Searched for tools", preview: "" };
+      return {
+        icon: MagnifyingGlass,
+        heading: "Searched for tools",
+        preview: "",
+        stack: { heading: "Searched for tools", headingActive: "Searching for tools", token: "" },
+      };
     case "Task":
     case "Agent":
       return {
@@ -252,6 +330,49 @@ export function toolDisplay(toolName: string, args: unknown): ToolDisplay {
 
 // ---- work-log rows ---------------------------------------------------------
 
+type RowStatus = "running" | "failed" | "done" | "pending";
+
+const partStatus = (p: {
+  result?: unknown;
+  isError?: boolean;
+  status?: { type: string };
+}): RowStatus => {
+  if (p.status?.type === "running") return "running";
+  if (p.isError === true || p.status?.type === "incomplete") return "failed";
+  if (p.result !== undefined) return "done";
+  return "pending";
+};
+
+/** The single-line work-row visual: icon · heading · mono preview · tick. */
+const RowShell: FC<{
+  icon: Icon;
+  heading: string;
+  preview: string;
+  status: RowStatus;
+}> = ({ icon: RowIcon, heading, preview, status }) => (
+  <div
+    data-slot="work-row"
+    className="flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-[3px] text-xxs"
+  >
+    <RowIcon className="size-3.5 shrink-0 text-ink/40" />
+    <span className="shrink-0 font-medium text-ink/75">{heading}</span>
+    <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground/70">
+      {preview}
+    </span>
+    <span className="flex shrink-0 items-center gap-1 text-ink/35">
+      {status === "running" ? (
+        <CircleNotch className="size-3 animate-spin [animation-duration:0.6s]" />
+      ) : status === "failed" ? (
+        <X className="size-3 text-alert" weight="bold" />
+      ) : status === "done" ? (
+        <Check className="size-3" weight="bold" />
+      ) : (
+        <Minus className="size-3 text-ink/25" />
+      )}
+    </span>
+  </div>
+);
+
 /** One tool call as a quiet single-line row. Deliberately not expandable —
     the row IS the whole story (heading + preview + status tick). */
 export const WorkRow: FC<ToolCallMessagePartProps> = ({
@@ -262,35 +383,122 @@ export const WorkRow: FC<ToolCallMessagePartProps> = ({
   status,
 }) => {
   const d = toolDisplay(toolName, args);
-  const RowIcon = d.icon;
-
-  const running = status?.type === "running";
-  const failed = isError === true || status?.type === "incomplete";
-  const done = !running && !failed && result !== undefined;
-  const heading = running ? (d.headingActive ?? d.heading) : d.heading;
-
+  const s = partStatus({ result, isError, status });
   return (
-    <div
-      data-slot="work-row"
-      className="flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-md px-1 py-[3px] text-xxs"
-    >
-      <RowIcon className="size-3.5 shrink-0 text-ink/40" />
-      <span className="shrink-0 font-medium text-ink/75">{heading}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground/70">
-        {d.preview}
-      </span>
-      <span className="flex shrink-0 items-center gap-1 text-ink/35">
-        {running ? (
-          <CircleNotch className="size-3 animate-spin [animation-duration:0.6s]" />
-        ) : failed ? (
-          <X className="size-3 text-alert" weight="bold" />
-        ) : done ? (
-          <Check className="size-3" weight="bold" />
-        ) : (
-          <Minus className="size-3 text-ink/25" />
-        )}
-      </span>
-    </div>
+    <RowShell
+      icon={d.icon}
+      heading={s === "running" ? (d.headingActive ?? d.heading) : d.heading}
+      preview={d.preview}
+      status={s}
+    />
+  );
+};
+
+// ---- run stacking ----------------------------------------------------------
+
+// Bursts of the same tool ("Read up on parts" × 12) collapse into one row:
+// the run's FIRST part renders the stacked line, the rest render nothing.
+// Runs are maximal sequences of consecutive tool-call parts sharing a
+// toolName, stack-enabled, and approval-free.
+
+type RawPart = {
+  type: string;
+  toolName?: string;
+  toolCallId?: string;
+  args?: unknown;
+  result?: unknown;
+  isError?: boolean;
+  status?: { type: string };
+  approval?: { approved?: boolean; resolution?: unknown } | null;
+};
+
+const inRun = (p: RawPart | undefined): p is RawPart =>
+  p != null &&
+  p.type === "tool-call" &&
+  p.approval == null &&
+  p.toolName !== undefined &&
+  toolDisplay(p.toolName, p.args).stack !== undefined;
+
+const sameRun = (a: RawPart, b: RawPart | undefined): b is RawPart =>
+  inRun(b) && b.toolName === a.toolName;
+
+/** [start, end] inclusive bounds of the run containing index i (i must be
+    in a run), else null. */
+function runBounds(parts: readonly RawPart[], i: number): [number, number] | null {
+  const me = parts[i];
+  if (!me || !inRun(me)) return null;
+  let start = i;
+  while (start > 0 && sameRun(me, parts[start - 1])) start--;
+  let end = i;
+  while (end + 1 < parts.length && sameRun(me, parts[end + 1])) end++;
+  return [start, end];
+}
+
+/** Work row that folds itself into its run: the lead renders one stacked
+    line for the whole burst, followers render nothing. Also hides while a
+    pending approval matches this call (the card is the single UI then). */
+export const RunAwareWorkRow: FC<ToolCallMessagePartProps> = (props) => {
+  const pendingHidden = useAuiState(
+    (s) =>
+      props.result === undefined &&
+      s.message.parts.some((p) => isPendingApproval(p) && sameCall(p, props)),
+  );
+  // Selectors return primitives only (an object here would be an unstable
+  // getSnapshot and loop React — see SystemMessage).
+  const role = useAuiState((s): "hidden" | "solo" | "lead" => {
+    const parts = s.message.parts as readonly RawPart[];
+    const i = parts.findIndex(
+      (p) => p.type === "tool-call" && p.toolCallId === props.toolCallId,
+    );
+    const bounds = i >= 0 ? runBounds(parts, i) : null;
+    if (!bounds || bounds[0] === bounds[1]) return "solo";
+    return i === bounds[0] ? "lead" : "hidden";
+  });
+  const tokens = useAuiState((s): string => {
+    if (role !== "lead") return "";
+    const parts = s.message.parts as readonly RawPart[];
+    const i = parts.findIndex(
+      (p) => p.type === "tool-call" && p.toolCallId === props.toolCallId,
+    );
+    const bounds = i >= 0 ? runBounds(parts, i) : null;
+    if (!bounds) return "";
+    const seen = new Set<string>();
+    for (let k = bounds[0]; k <= bounds[1]; k++) {
+      const p = parts[k];
+      const t = p.toolName ? toolDisplay(p.toolName, p.args).stack?.token : undefined;
+      if (t) seen.add(t);
+    }
+    return [...seen].join(", ");
+  });
+  const runStatus = useAuiState((s): RowStatus => {
+    if (role !== "lead") return "pending";
+    const parts = s.message.parts as readonly RawPart[];
+    const i = parts.findIndex(
+      (p) => p.type === "tool-call" && p.toolCallId === props.toolCallId,
+    );
+    const bounds = i >= 0 ? runBounds(parts, i) : null;
+    if (!bounds) return "pending";
+    const statuses: RowStatus[] = [];
+    for (let k = bounds[0]; k <= bounds[1]; k++) statuses.push(partStatus(parts[k]));
+    if (statuses.includes("running")) return "running";
+    if (statuses.includes("failed")) return "failed";
+    if (statuses.every((st) => st === "done")) return "done";
+    return "pending";
+  });
+
+  if (pendingHidden || role === "hidden") return null;
+  if (role === "solo") return <WorkRow {...props} />;
+
+  const d = toolDisplay(props.toolName, props.args);
+  const stack = d.stack;
+  if (!stack) return <WorkRow {...props} />;
+  return (
+    <RowShell
+      icon={d.icon}
+      heading={runStatus === "running" ? stack.headingActive : stack.heading}
+      preview={tokens}
+      status={runStatus}
+    />
   );
 };
 
@@ -315,18 +523,6 @@ export const isPendingApproval = (p: PartLike) =>
   p.approval != null &&
   p.approval.approved === undefined &&
   p.approval.resolution === undefined;
-
-/** Work row that steps aside while its call is waiting on an approval —
-    the approval card is the single representation then. */
-export const GuardedWorkRow: FC<ToolCallMessagePartProps> = (part) => {
-  const hidden = useAuiState(
-    (s) =>
-      part.result === undefined &&
-      s.message.parts.some((p) => isPendingApproval(p) && sameCall(p, part)),
-  );
-  if (hidden) return null;
-  return <WorkRow {...part} />;
-};
 
 /** Pending permission, in work-row language: friendly heading + the exact
     thing being approved (full command/url), then Allow/Deny. No JSON. */
