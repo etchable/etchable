@@ -104,6 +104,9 @@ export type BackendState = {
   agentRunning: boolean;
   build: BuildView | null;
   project: ProjectView | null;
+  /** Unanswered permission prompts (the agent's turn is blocked on these);
+      re-materialized as cards when the webview (re)mounts. */
+  pendingPermissions: { requestId: string; toolName: string; input: unknown }[];
 };
 
 // ---- Agent events (camelCase, flat tagged union) ----

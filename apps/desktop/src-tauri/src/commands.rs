@@ -54,6 +54,7 @@ async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedA
         pending_resumed_from: std::sync::Mutex::new(None),
         stdlib_source: std::sync::OnceLock::new(),
         watcher: std::sync::Mutex::new(None),
+        pending_permissions: std::sync::Mutex::new(Vec::new()),
     });
     if let Some(stdlib) = registry.stdlib_source.get() {
         let _ = state.stdlib_source.set(stdlib.clone());
@@ -288,6 +289,11 @@ pub async fn get_state(
 ) -> CmdResult<UiStateSnapshot> {
     let state = instance(&registry, &window)?;
     let agent_running = state.agent.lock().await.is_some();
+    let pending_permissions = state
+        .pending_permissions
+        .lock()
+        .expect("pending permissions lock")
+        .clone();
     Ok(state.canvas.read(|s| UiStateSnapshot {
         workspace_root: s.workspace_root.as_ref().map(|p| p.display().to_string()),
         source: s.source.as_ref().map(|p| p.display().to_string()),
@@ -295,6 +301,7 @@ pub async fn get_state(
         agent_running,
         build: s.build.as_ref().map(BuildView::from),
         project: s.project.as_ref().map(crate::state::ProjectView::from),
+        pending_permissions: pending_permissions.clone(),
     }))
 }
 
@@ -410,7 +417,13 @@ pub async fn respond_permission(
     session
         .respond_permission(&request_id, allow, message.as_deref())
         .await
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+    state
+        .pending_permissions
+        .lock()
+        .expect("pending permissions lock")
+        .retain(|p| p.request_id != request_id);
+    Ok(())
 }
 
 /// Best-effort interrupt of the in-flight turn.
@@ -436,6 +449,11 @@ pub async fn new_session(
     if let Some(session) = guard.take() {
         let _ = session.kill().await;
     }
+    state
+        .pending_permissions
+        .lock()
+        .expect("pending permissions lock")
+        .clear();
     Ok(())
 }
 

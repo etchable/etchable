@@ -88,10 +88,30 @@ export function useEtchable() {
         if (disposed) return;
         setSource(s.source);
         setSelectionState(s.selection?.paths ?? []);
-        setAgentRunning(s.agentRunning);
+        // Deliberately NOT hydrating agentRunning: the snapshot's flag means
+        // "a session exists", not "a turn is in flight". A remounting UI has
+        // no transcript to resume anyway; live agent-event status/result
+        // updates own this bit. Mapping session-exists onto running left the
+        // chat stuck on the working indicator after a webview reload.
         setProject(s.project ?? null);
         refreshSessions(s.workspaceRoot ?? null);
         if (s.build) acceptBuild(s.build);
+        // …EXCEPT pending permissions: the CLI blocks its turn on them, so
+        // losing the cards to a reload would wedge the session. Rebuild the
+        // cards, and since a prompt implies a turn in flight, show running.
+        const pending = s.pendingPermissions ?? [];
+        for (const p of pending) {
+          dispatchTranscript({
+            type: "agent-event",
+            event: {
+              type: "permission_request",
+              requestId: p.requestId,
+              toolName: p.toolName,
+              input: p.input,
+            } as AgentEvent,
+          });
+        }
+        if (pending.length > 0) setAgentRunning(true);
       })
       .catch((err) => console.error("get_state failed", err));
 
@@ -253,6 +273,9 @@ export function useEtchable() {
       await invoke("new_session");
       dispatchTranscript({ type: "clear" });
       setSessionInfo(null);
+      // The session is dead; don't wait on its closing status event to
+      // un-stick the working indicator.
+      setAgentRunning(false);
     } catch (err) {
       dispatchTranscript({ type: "system", text: String(err), isError: true });
     }

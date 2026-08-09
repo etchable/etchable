@@ -164,7 +164,9 @@ fn emit(app: &AppHandle, label: &str, payload: Value) {
 
 /// Flatten protocol events into simple tagged JSON for the chat panel,
 /// recording session lifecycle into the store on the way (`flatten` itself
-/// stays a pure translator).
+/// stays a pure translator) and mirroring unanswered permission prompts
+/// into the instance state — the CLI blocks on them, and a reloading
+/// webview must re-materialize the cards (see `pending_permissions`).
 fn pump_events(app: AppHandle, state: SharedAppState, mut rx: agent_host::AgentEventRx) {
     let workspace_root = state
         .canvas
@@ -183,6 +185,33 @@ fn pump_events(app: AppHandle, state: SharedAppState, mut rx: agent_host::AgentE
                 }
             };
             record_session_event(&state, &workspace_root, &event).await;
+            match &event {
+                AgentEvent::ControlRequest(req) => {
+                    if let ControlRequestBody::CanUseTool {
+                        tool_name, input, ..
+                    } = &req.request
+                    {
+                        state
+                            .pending_permissions
+                            .lock()
+                            .expect("pending permissions lock")
+                            .push(crate::state::PendingPermission {
+                                request_id: req.request_id.clone(),
+                                tool_name: tool_name.clone(),
+                                input: input.clone(),
+                            });
+                    }
+                }
+                // Turn over (finished or interrupted): nothing pends anymore.
+                AgentEvent::Result(_) => {
+                    state
+                        .pending_permissions
+                        .lock()
+                        .expect("pending permissions lock")
+                        .clear();
+                }
+                _ => {}
+            }
             for ui_event in flatten(event) {
                 emit(&app, &label, ui_event);
             }
@@ -294,8 +323,13 @@ fn flatten(event: AgentEvent) -> Vec<Value> {
             if let Some(text) = s.event.pointer("/delta/text").and_then(Value::as_str) {
                 return vec![json!({"type": "stream_delta", "text": text})];
             }
+            // Newer models (fable-5, opus-4.8+) redact thinking on the wire:
+            // deltas fire with EMPTY text (signature-only blocks). Forwarding
+            // those would open a contentless "Thinking" row in the chat.
             if let Some(text) = s.event.pointer("/delta/thinking").and_then(Value::as_str) {
-                return vec![json!({"type": "thinking_delta", "text": text})];
+                if !text.is_empty() {
+                    return vec![json!({"type": "thinking_delta", "text": text})];
+                }
             }
             vec![]
         }

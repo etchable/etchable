@@ -18,7 +18,9 @@
   "dependencies": {
     "@assistant-ui/react": "^0.15.11",
     "@assistant-ui/react-markdown": "^0.14.10",
+    "@base-ui-components/react": "1.0.0-rc.0",
     "@etchable/ui": "file:../../packages/ui",
+    "@phosphor-icons/react": "^2.1.10",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
@@ -29,11 +31,16 @@
     "circuit-json": "0.0.465",
     "circuit-json-to-connectivity-map": "0.0.27",
     "circuit-to-svg": "0.0.400",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "format-si-unit": "0.0.11",
+    "radix-ui": "^1.6.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "remark-gfm": "^4.0.1",
     "schematic-symbols": "0.0.238",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

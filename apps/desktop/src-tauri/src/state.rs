@@ -53,9 +53,22 @@ pub struct AppState {
     pub stdlib_source: std::sync::OnceLock<PathBuf>,
     /// Keeps the fs watcher alive; replaced when a new board is opened.
     pub watcher: std::sync::Mutex<Option<notify::RecommendedWatcher>>,
+    /// Unanswered `can_use_tool` requests. The CLI blocks its turn on these,
+    /// so they must outlive the webview: a reload re-materializes the cards
+    /// from here (a lost prompt would wedge the session forever).
+    pub pending_permissions: std::sync::Mutex<Vec<PendingPermission>>,
 }
 
 pub type SharedAppState = Arc<AppState>;
+
+/// A permission prompt the agent is blocked on.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingPermission {
+    pub request_id: String,
+    pub tool_name: String,
+    pub input: serde_json::Value,
+}
 
 /// App-global: the map from window label to project instance, plus the
 /// startup facts every instance copies.
@@ -154,6 +167,7 @@ pub struct UiStateSnapshot {
     pub agent_running: bool,
     pub build: Option<BuildView>,
     pub project: Option<ProjectView>,
+    pub pending_permissions: Vec<PendingPermission>,
 }
 
 /// Versioned `build-finished` payload / snapshot build state. The UI rejects

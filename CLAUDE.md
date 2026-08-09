@@ -119,7 +119,24 @@ the trajectory).
   `part=Part(...)` splice is needed, and the `Footprint` property is exactly
   the install name (an `X:Y` value is a hard eval error). Cards carry
   `[provenance]` (`verified = false` until a human checks) and `[assets]`.
-  Thinking blocks/deltas surface in the chat; keep `flatten()` emitting them.
+  Thinking blocks/deltas surface in the chat; keep `flatten()` emitting them
+  — but note current-gen models (fable-5, opus-4.8, opus-5) REDACT thinking
+  on the wire (signature-only blocks, empty-text deltas; verified against
+  CLI 2.1.220), so no thinking renders for them by design. flatten() drops
+  empty thinking blocks AND empty deltas so redacted turns don't leave
+  contentless "Thinking" rows. Older models (haiku-4.5, opus-4.6) still
+  stream thinking text and render fine.
+- Chat UI: `apps/desktop/src/chat/assistant-ui/` is VENDORED from the
+  assistant-ui shadcn registry (r.assistant-ui.com — re-fetch to update),
+  adapted to Phosphor icons and slimmed (no attachments/dictation/branching).
+  `src/chat/ui/` holds the shadcn-compat primitives it imports; Collapsible
+  is Base UI (not Radix) on purpose — the templates style Base UI's
+  `data-open`/`data-panel-open` attributes. The shadcn semantic color tokens
+  (`--color-background`, `--color-muted`, …) are mapped onto the etchable
+  palette in App.css and exist FOR the vendored components — app code keeps
+  using the palette directly. `runtime.ts` folds the ChatItem transcript
+  into one assistant message per TURN (mergeTurns) so reasoning/tool parts
+  group into accordions; permission prompts ride the tool-approval channel.
 - Embedded-agent permissions: sessions spawn with `--allowedTools`
   auto-allowing the app's own MCP server (`mcp__etchable`) plus `Read`,
   `Edit`, and `Write` inside the open workspace root — those never show

@@ -1,9 +1,9 @@
 <!doctype html>
-<!-- The workbench page (the dashboard lives in index.html). -->
+<!-- Dev-only harness: mounts the Chat panel standalone (no Tauri) so the
+     chat UI can be exercised in a plain browser. Not part of the build. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,11 +11,11 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&family=Karla:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
     />
-    <title>etchable</title>
+    <title>chat repro</title>
   </head>
 
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main-app.tsx"></script>
+    <div id="root" style="width: 420px; height: 100vh; margin-left: auto"></div>
+    <script type="module" src="/src/repro-main.tsx"></script>
   </body>
 </html>

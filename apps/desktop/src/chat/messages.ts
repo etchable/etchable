@@ -3,7 +3,7 @@
 import type { AgentEvent } from "../types";
 
 export type ChatItem =
-  | { kind: "user"; id: number; text: string }
+  | { kind: "user"; id: number; text: string; at?: number }
   | { kind: "agent"; id: number; text: string; streaming: boolean }
   | { kind: "thinking"; id: number; text: string; streaming: boolean }
   | {
@@ -32,6 +32,7 @@ export type ChatItem =
       costUsd?: number;
       numTurns?: number;
       durationMs?: number;
+      at?: number;
     };
 
 export type TranscriptAction =
@@ -82,7 +83,7 @@ export function transcriptReducer(items: ChatItem[], action: TranscriptAction): 
     case "clear":
       return [];
     case "user":
-      return [...items, { kind: "user", id: nextId(), text: action.text }];
+      return [...items, { kind: "user", id: nextId(), text: action.text, at: Date.now() }];
     case "system":
       return [
         ...items,
@@ -194,6 +195,7 @@ function applyAgentEvent(items: ChatItem[], ev: AgentEvent): ChatItem[] {
           costUsd: ev.costUsd,
           numTurns: ev.numTurns,
           durationMs: ev.durationMs,
+          at: Date.now(),
         },
       ];
     }
@@ -204,6 +206,75 @@ function applyAgentEvent(items: ChatItem[], ev: AgentEvent): ChatItem[] {
 }
 
 // ---- display helpers -------------------------------------------------------
+
+export const MCP_PREFIX = "mcp__etchable__";
+
+/** The 16 canvas tools (docs/decisions/0003+0004), as live activities. */
+const MCP_ACTIVITY: Record<string, string> = {
+  get_selection: "Checking the selection…",
+  get_schematic: "Reading the schematic…",
+  get_instance: "Inspecting a component…",
+  query_nets: "Tracing nets…",
+  get_diagnostics: "Checking diagnostics…",
+  get_parts: "Reading part data…",
+  build: "Rebuilding…",
+  list_library: "Browsing the library…",
+  search_parts: "Searching parts…",
+  get_lcsc_part: "Checking a part…",
+  add_lcsc_component: "Installing a component…",
+  add_component: "Installing a component…",
+  install_component: "Installing a component…",
+  get_symbol_pins: "Reading symbol pins…",
+  fetch_datasheet: "Fetching a datasheet…",
+  zener_reference: "Reading the Zener guide…",
+};
+
+function fileBasename(input: unknown): string | null {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const p = (input as Record<string, unknown>).file_path;
+    if (typeof p === "string" && p.length > 0) return p.split("/").pop() ?? null;
+  }
+  return null;
+}
+
+/** "What is it doing right now" — the running-tool status line. */
+export function activityLabel(toolName: string, input?: unknown): string {
+  if (toolName.startsWith(MCP_PREFIX)) {
+    const name = toolName.slice(MCP_PREFIX.length);
+    return MCP_ACTIVITY[name] ?? `Using ${name}…`;
+  }
+  const file = fileBasename(input);
+  switch (toolName) {
+    case "Read":
+      return file ? `Reading ${file}…` : "Reading files…";
+    case "Edit":
+    case "Write":
+      return file ? `Editing ${file}…` : "Editing the source…";
+    case "Bash":
+      return "Running a command…";
+    case "Grep":
+    case "Glob":
+      return "Searching the workspace…";
+    case "WebFetch":
+    case "WebSearch":
+      return "Browsing the web…";
+    case "ToolSearch":
+      return "Finding tools…";
+    case "TodoWrite":
+    case "TaskCreate":
+    case "TaskUpdate":
+    case "EnterPlanMode":
+    case "ExitPlanMode":
+      return "Planning…";
+    case "Task":
+    case "Agent":
+      return "Delegating…";
+    case "Skill":
+      return "Using a skill…";
+    default:
+      return `Using ${toolName}…`;
+  }
+}
 
 /** One-line preview of a tool input (file_path / command / first chars of JSON). */
 export function previewInput(input: unknown): string {

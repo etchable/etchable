@@ -4,6 +4,7 @@
    (scrollbars, keyframes, the JS-driven canvas dot grid). */
 
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "@etchable/ui/theme.css";
 
 @theme {
@@ -13,6 +14,65 @@
   --color-warn: #c9950c;
   --color-warn-deep: #94700e;
   --color-leaf-deep: #1f8f53;
+
+  /* shadcn-style semantic tokens, mapped onto the etchable palette. The
+     vendored assistant-ui chat components (src/chat/assistant-ui/) style
+     against these names; everything else keeps using the palette directly. */
+  --color-background: #f4f2ec;
+  --color-foreground: #232b3f;
+  --color-muted: #e9e6de;
+  --color-muted-foreground: #6c7385;
+  --color-border: rgba(35, 43, 63, 0.12);
+  --color-input: rgba(35, 43, 63, 0.12);
+  --color-accent: rgba(35, 43, 63, 0.06);
+  --color-accent-foreground: #232b3f;
+  --color-primary: #c1783c;
+  --color-primary-foreground: #ffffff;
+  --color-destructive: #d64545;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #232b3f;
+  --color-card: #ffffff;
+  --color-card-foreground: #232b3f;
+  --color-ring: #4d9fff;
+
+  /* Base UI collapsible open/close (the vendored chat components animate
+     via `animate-collapsible-*`; Base UI supplies the height var). */
+  --animate-collapsible-down: collapsible-down 0.2s ease-out;
+  --animate-collapsible-up: collapsible-up 0.2s ease-out;
+
+  /* The working row's staggered pulse dots (chat). */
+  --animate-status-pulse: status-pulse 2s ease-in-out infinite;
+
+  @keyframes status-pulse {
+    0%,
+    40% {
+      opacity: 1;
+    }
+    50%,
+    90% {
+      opacity: 0.35;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes collapsible-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--collapsible-panel-height);
+    }
+  }
+  @keyframes collapsible-up {
+    from {
+      height: var(--collapsible-panel-height);
+    }
+    to {
+      height: 0;
+    }
+  }
 
   /* 11px instrument chrome (Pencil's text-xxs). */
   --text-xxs: 11px;
@@ -56,88 +116,37 @@ body {
   background: rgba(35, 43, 63, 0.15);
 }
 
-/* Markdown body in assistant chat messages (assistant-ui MarkdownTextPrimitive).
-   Preflight strips element margins; restore just enough rhythm for chat. */
-.chat-md {
-  user-select: text;
-  overflow-wrap: anywhere;
-}
-.chat-md > :first-child {
-  margin-top: 0;
-}
-.chat-md > :last-child {
-  margin-bottom: 0;
-}
-.chat-md p,
-.chat-md ul,
-.chat-md ol,
-.chat-md pre,
-.chat-md table,
-.chat-md blockquote {
-  margin: 0.4em 0;
-}
-.chat-md ul,
-.chat-md ol {
-  padding-left: 1.3em;
-}
-.chat-md ul {
-  list-style: disc;
-}
-.chat-md ol {
-  list-style: decimal;
-}
-.chat-md h1,
-.chat-md h2,
-.chat-md h3,
-.chat-md h4,
-.chat-md h5,
-.chat-md h6 {
-  margin: 0.7em 0 0.3em;
-  font-size: 1.05em;
-  font-weight: 700;
-}
-.chat-md a {
-  color: var(--color-sky);
-  text-decoration: underline;
-}
-.chat-md code {
-  border-radius: 4px;
-  background: rgba(35, 43, 63, 0.06);
-  padding: 0.1em 0.3em;
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-}
-.chat-md pre {
-  overflow-x: auto;
-  border-radius: 6px;
-  background: white;
-  padding: 6px 8px;
-  box-shadow: inset 0 0 0 0.5px rgba(35, 43, 63, 0.08);
-}
-.chat-md pre code {
-  background: none;
-  padding: 0;
-}
-.chat-md blockquote {
-  border-left: 2px solid rgba(35, 43, 63, 0.15);
-  padding-left: 8px;
-  color: rgba(35, 43, 63, 0.65);
-}
-.chat-md th,
-.chat-md td {
-  border: 1px solid rgba(35, 43, 63, 0.12);
-  padding: 2px 6px;
-  text-align: left;
+/* The composer's focus ring rides the whole card (copper, focus-within on
+   the shell in thread.tsx); the theme's global sky :focus-visible outline
+   must not double up on the textarea. Unlayered on purpose — the theme rule
+   is unlayered too, so no Tailwind utility (layered) can override it. */
+.aui-composer-input:focus-visible {
+  outline: none;
 }
 
-/* Streaming-text cursor. */
-.caret-blink {
-  color: var(--color-copper);
-  animation: blink 1s steps(2) infinite;
+/* Ink sweep across "running" labels in the chat (vendored assistant-ui
+   components render a .shimmer overlay copy of the label while a tool or
+   thought is live). Dark highlight — the theme is light. */
+.shimmer {
+  color: transparent;
+  background: linear-gradient(
+      110deg,
+      transparent 25%,
+      rgba(35, 43, 63, 0.9) 50%,
+      transparent 75%
+    )
+    no-repeat;
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer-slide 2.2s linear infinite;
 }
-@keyframes blink {
-  50% {
-    opacity: 0;
+@keyframes shimmer-slide {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -50% 0;
   }
 }
 
