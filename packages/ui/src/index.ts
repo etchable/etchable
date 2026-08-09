@@ -13,6 +13,7 @@ export {
   IconCrosshair,
   IconPlus,
   IconSidebarSimple,
+  IconSquaresFour,
   IconStop,
   IconWarning,
   IconX,

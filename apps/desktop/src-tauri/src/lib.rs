@@ -35,6 +35,39 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state.clone())
+        // Windows hide instead of closing (the app window's webview holds the
+        // chat transcript; destroying it would lose the conversation view).
+        // Closing the last visible window quits.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                match window.label() {
+                    "app" => {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        if let Some(dash) = app.get_webview_window("dashboard") {
+                            let _ = dash.show();
+                            let _ = dash.set_focus();
+                        }
+                    }
+                    "dashboard" => {
+                        let app_visible = app
+                            .get_webview_window("app")
+                            .and_then(|w| w.is_visible().ok())
+                            .unwrap_or(false);
+                        if app_visible {
+                            api.prevent_close();
+                            let _ = window.hide();
+                        } else {
+                            // Last visible window: a destroyed dashboard plus
+                            // a hidden app window would leave a zombie process.
+                            app.exit(0);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        })
         .setup(move |app| {
             let handle = app.handle().clone();
 
@@ -56,6 +89,7 @@ pub fn run() {
             // startup (relative to the invocation cwd).
             if let Ok(target) = std::env::var("ETCHABLE_OPEN") {
                 let state = app_state.clone();
+                let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     match std::path::PathBuf::from(&target).canonicalize() {
                         Ok(path) => {
@@ -80,7 +114,7 @@ pub fn run() {
                                 (path, None)
                             };
                             if let Err(e) =
-                                commands::open_board_file(&state, entry, project).await
+                                commands::open_board_file(&handle, &state, entry, project).await
                             {
                                 tracing::error!("ETCHABLE_OPEN build failed: {e}");
                             }
@@ -123,6 +157,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::select_board,
+            commands::show_dashboard,
             commands::open_project,
             commands::create_project,
             commands::get_state,

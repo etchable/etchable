@@ -10,6 +10,17 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
+  // Two pages, one per window: index.html is the dashboard, app.html the
+  // workbench (see tauri.conf.json app.windows).
+  build: {
+    rollupOptions: {
+      input: {
+        dashboard: new URL("./index.html", import.meta.url).pathname,
+        app: new URL("./app.html", import.meta.url).pathname,
+      },
+    },
+  },
+
   clearScreen: false,
   server: {
     port: 1420,

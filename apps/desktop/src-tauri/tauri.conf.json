@@ -12,9 +12,22 @@
   "app": {
     "windows": [
       {
+        "label": "dashboard",
         "title": "etchable",
+        "url": "index.html",
+        "width": 820,
+        "height": 620,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 15, "y": 24 }
+      },
+      {
+        "label": "app",
+        "title": "etchable",
+        "url": "app.html",
         "width": 1400,
         "height": 900,
+        "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 15, "y": 24 }

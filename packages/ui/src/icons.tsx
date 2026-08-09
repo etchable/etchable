@@ -6,6 +6,7 @@ import {
   Crosshair,
   Plus,
   SidebarSimple,
+  SquaresFour,
   Stop,
   Warning,
   X,
@@ -28,5 +29,6 @@ export const IconStop = chrome(Stop, "fill");
 export const IconChevronRight = chrome(CaretRight, "bold");
 export const IconChevronDown = chrome(CaretDown, "bold");
 export const IconSidebarSimple = chrome(SidebarSimple);
+export const IconSquaresFour = chrome(SquaresFour);
 export const IconWarning = chrome(Warning);
 export const IconCrosshair = chrome(Crosshair);

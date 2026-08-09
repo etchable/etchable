@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use zen_build::BuildSummary;
 
 use crate::state::{BuildRequest, BuildView, SharedAppState, UiStateSnapshot};
@@ -10,9 +10,35 @@ use crate::{agent, builder};
 
 type CmdResult<T> = Result<T, String>;
 
+/// Bring the app (workbench) window forward and tuck the dashboard away.
+/// Windows are only ever hidden, never destroyed — the app window's webview
+/// holds live UI state (the chat transcript) that a re-create would lose.
+pub fn show_app_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("app") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    if let Some(w) = app.get_webview_window("dashboard") {
+        let _ = w.hide();
+    }
+}
+
+/// Bring the dashboard window forward (the app window, if visible, stays).
+#[tauri::command]
+pub fn show_dashboard(app: AppHandle) -> CmdResult<()> {
+    let w = app
+        .get_webview_window("dashboard")
+        .ok_or("no dashboard window")?;
+    w.show().map_err(|e| e.to_string())?;
+    w.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Shared tail of every open flow: point the canvas at a board file, build,
-/// then watch from the resolved workspace root.
+/// then watch from the resolved workspace root. On success the app window
+/// takes over from the dashboard.
 pub async fn open_board_file(
+    app: &AppHandle,
     state: &SharedAppState,
     entry: PathBuf,
     project: Option<zen_build::ProjectDoc>,
@@ -29,6 +55,7 @@ pub async fn open_board_file(
     if let Some(root) = state.canvas.read(|s| s.workspace_root.clone()) {
         builder::start_watcher(state, &root).map_err(|e| e.to_string())?;
     }
+    show_app_window(app);
     Ok(summary)
 }
 
@@ -44,14 +71,14 @@ pub async fn select_board(
         return Err(format!("not a .zen file: {}", path.display()));
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-    let _ = app;
-    open_board_file(&state, path, None).await
+    open_board_file(&app, &state, path, None).await
 }
 
 /// Open an etchable project directory (the primary flow): requires
 /// `etch.toml`, resolves the board entry, loads part data.
 #[tauri::command]
 pub async fn open_project(
+    app: AppHandle,
     state: State<'_, SharedAppState>,
     path: String,
 ) -> CmdResult<BuildSummary> {
@@ -79,12 +106,13 @@ pub async fn open_project(
     if !entry.is_file() || entry.extension().is_none_or(|e| e != "zen") {
         return Err(format!("board entry is not a .zen file: {}", entry.display()));
     }
-    open_board_file(&state, entry, Some(doc)).await
+    open_board_file(&app, &state, entry, Some(doc)).await
 }
 
 /// Scaffold a fresh project and open it.
 #[tauri::command]
 pub async fn create_project(
+    app: AppHandle,
     state: State<'_, SharedAppState>,
     parent: String,
     name: String,
@@ -102,7 +130,7 @@ pub async fn create_project(
     if !result.git_initialized {
         tracing::warn!("scaffolded {} without a git repo", result.root.display());
     }
-    open_project(state, result.root.display().to_string()).await
+    open_project(app, state, result.root.display().to_string()).await
 }
 
 /// Snapshot for (re)mounting UIs.
