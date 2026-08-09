@@ -144,15 +144,15 @@ mod tests {
         assert!(names.contains(&"get_schematic"));
         assert!(names.contains(&"get_selection"));
         assert!(names.contains(&"get_circuit_json"));
-        assert!(names.contains(&"get_parts"));
+        assert!(names.contains(&"get_bom"));
         assert!(names.contains(&"list_library"));
         assert!(names.contains(&"get_symbol_pins"));
         assert!(names.contains(&"add_component"));
         assert!(names.contains(&"search_parts"));
-        assert!(names.contains(&"get_lcsc_part"));
-        assert!(names.contains(&"add_lcsc_component"));
+        assert!(names.contains(&"get_part"));
         assert!(names.contains(&"fetch_datasheet"));
         assert!(names.contains(&"zener_reference"));
+        assert!(names.contains(&"set_positions"));
         assert_eq!(names.len(), 18);
 
         // Every tool carries MCP annotations so clients can tell
@@ -170,8 +170,84 @@ mod tests {
                 .clone()
         };
         assert_eq!(by_name("get_schematic")["annotations"]["readOnlyHint"], true);
-        assert_eq!(by_name("add_lcsc_component")["annotations"]["readOnlyHint"], false);
-        assert_eq!(by_name("add_lcsc_component")["annotations"]["openWorldHint"], true);
+        assert_eq!(by_name("add_component")["annotations"]["readOnlyHint"], false);
+        assert_eq!(by_name("add_component")["annotations"]["openWorldHint"], true);
+    }
+
+    #[tokio::test]
+    async fn add_component_routes_by_source() {
+        let state = fixture_state();
+        // No source at all: the either/or error, not a schema mystery.
+        let (text, is_error) =
+            tools::call_tool(&state, "add_component", &serde_json::json!({"name": "X"})).await;
+        assert!(is_error);
+        assert!(text.contains("`lcsc`") && text.contains("`symbol_library`"), "{text}");
+
+        // LCSC source without a project: routed to the fetch path.
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "add_component",
+            &serde_json::json!({"name": "X", "lcsc": "C2040"}),
+        )
+        .await;
+        assert!(is_error);
+        assert!(text.contains("no project open"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn set_positions_writes_the_pcb_sch_block() {
+        let dir = std::env::temp_dir().join(format!("etch-setpos-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let board = dir.join("top.zen");
+        std::fs::write(&board, "# demo board\n").unwrap();
+
+        let state = fixture_state();
+        state.write(|s| s.source = Some(board.clone()));
+        // Re-record the build so source_hash captures the file on disk.
+        let build = state.read(|s| s.build.clone()).unwrap();
+        state.set_build(build);
+
+        // Stale-guard: modify the file after the build.
+        std::fs::write(&board, "# demo board v2\n").unwrap();
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "set_positions",
+            &serde_json::json!({"positions": {"R1": {"x": 2.0, "y": 1.5}}}),
+        )
+        .await;
+        assert!(is_error);
+        assert!(text.contains("changed since the last build"), "{text}");
+
+        // Fresh build over the current file: the write goes through.
+        let build = state.read(|s| s.build.clone()).unwrap();
+        state.set_build(build);
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "set_positions",
+            &serde_json::json!({"positions": {"R1": {"x": 2.0, "y": 1.5, "rotation": 90}}}),
+        )
+        .await;
+        assert!(!is_error, "{text}");
+        let detail: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(detail["moved"][0], "root.R1");
+        assert_eq!(detail["written"], 1);
+
+        // Schematic (2.0, 1.5) y-up -> pcb:sch (50.8, -38.1) y-down.
+        let written = std::fs::read_to_string(&board).unwrap();
+        assert!(written.contains("pcb:sch"), "{written}");
+        assert!(written.contains("50.8"), "{written}");
+        assert!(written.contains("-38.1"), "{written}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn get_part_wants_a_vendor_key() {
+        let state = fixture_state();
+        let (text, is_error) =
+            tools::call_tool(&state, "get_part", &serde_json::json!({})).await;
+        assert!(is_error);
+        assert!(text.contains("vendor"), "{text}");
     }
 
     #[tokio::test]
@@ -283,10 +359,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_parts_requires_a_project() {
+    async fn get_bom_requires_a_project() {
         let state = fixture_state();
         let (text, is_error) =
-            tools::call_tool(&state, "get_parts", &serde_json::json!({})).await;
+            tools::call_tool(&state, "get_bom", &serde_json::json!({})).await;
         assert!(is_error);
         assert!(text.contains("no project open"), "{text}");
     }

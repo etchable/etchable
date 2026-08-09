@@ -51,11 +51,16 @@ const str = (v: unknown): string | undefined =>
 
 const basename = (p?: string): string | undefined => p?.split("/").pop();
 
-/** The 16 canvas tools: icon + past/active headings + which arg previews. */
+/** The 18 canvas tools: icon + past/active headings + which arg previews. */
 const MCP_DISPLAY: Record<
   string,
   { icon: Icon; heading: string; active?: string; arg?: string }
 > = {
+  get_board_state: {
+    icon: Circuitry,
+    heading: "Got oriented",
+    active: "Getting oriented",
+  },
   get_selection: { icon: Circuitry, heading: "Checked selection", active: "Checking selection" },
   get_schematic: { icon: Circuitry, heading: "Read schematic", active: "Reading schematic" },
   get_instance: { icon: Circuitry, heading: "Inspected", active: "Inspecting", arg: "path" },
@@ -65,7 +70,18 @@ const MCP_DISPLAY: Record<
     heading: "Checked diagnostics",
     active: "Checking diagnostics",
   },
-  get_parts: { icon: MagnifyingGlass, heading: "Read part data", active: "Reading part data" },
+  check_layout: {
+    icon: Circuitry,
+    heading: "Checked layout",
+    active: "Checking layout",
+    arg: "scope",
+  },
+  set_positions: {
+    icon: PencilSimple,
+    heading: "Arranged the canvas",
+    active: "Arranging the canvas",
+  },
+  get_bom: { icon: MagnifyingGlass, heading: "Read the BOM", active: "Reading the BOM" },
   build: { icon: Hammer, heading: "Rebuilt the board", active: "Rebuilding the board" },
   list_library: {
     icon: MagnifyingGlass,
@@ -79,17 +95,11 @@ const MCP_DISPLAY: Record<
     active: "Searching parts",
     arg: "query",
   },
-  get_lcsc_part: {
+  get_part: {
     icon: MagnifyingGlass,
     heading: "Checked part",
     active: "Checking part",
-    arg: "part",
-  },
-  add_lcsc_component: {
-    icon: PuzzlePiece,
-    heading: "Installed component",
-    active: "Installing component",
-    arg: "part",
+    arg: "lcsc",
   },
   add_component: {
     icon: PuzzlePiece,

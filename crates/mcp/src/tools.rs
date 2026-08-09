@@ -151,8 +151,40 @@ pub fn tool_defs() -> Vec<ToolDef> {
             annotations: read_only("Check layout"),
         },
         ToolDef {
+            name: "set_positions",
+            description: "Move components on the canvas by writing their authored positions into the board's `# pcb:sch` block — the structured writer for that machine-owned layer (never text-edit those blocks). Coordinates are schematic units, y-up: the same space get_circuit_json reports component centers in. Batch by design — pass every move in one call; unmoved components keep their current spots (the write persists all positions atomically). The canvas rebuilds automatically; re-run check_layout afterwards.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "positions": {
+                        "type": "object",
+                        "description": "Map from instance path (root.X.Y) or refdes (R1) to its new center",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number", "description": "Schematic y (up is positive), matching get_circuit_json"},
+                                "rotation": {"type": "number", "description": "Degrees; omit to keep the current rotation"}
+                            },
+                            "required": ["x", "y"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["positions"],
+                "additionalProperties": false
+            }),
+            annotations: json!({
+                "title": "Move components",
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false,
+            }),
+        },
+        ToolDef {
             name: "list_library",
-            description: "Inventory of everything buildable WITHOUT the network: stdlib generics (with their config/io surface) and this project's components. Call this FIRST when sourcing parts. Real parts beyond the generics come from LCSC via search_parts + add_lcsc_component.",
+            description: "Inventory of everything buildable WITHOUT the network: stdlib generics (with their config/io surface) and this project's components. Call this FIRST when sourcing parts. Real parts beyond the generics come from LCSC via search_parts + add_component.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -178,30 +210,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
             annotations: read_only("Get symbol pins"),
         },
         ToolDef {
-            name: "add_component",
-            description: "Escape hatch: create a project component from a user-supplied .kicad_sym file already on disk. For real parts, use add_lcsc_component instead — it fetches everything from LCSC. The canvas rebuilds automatically.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
-                    "symbol_library": {"type": "string", "description": "Symbol file path (@stdlib/... or project-relative); must hold exactly one symbol"},
-                    "symbol_name": {"type": "string"},
-                    "footprint": {"type": "string", "description": "Footprint path (@stdlib/kicad-footprints/<lib>.pretty/<fp>.kicad_mod or project-relative). Omit to use the symbol's own footprint property"},
-                    "mpn": {"type": "string"},
-                    "manufacturer": {"type": "string"},
-                    "lcsc": {"type": "string", "pattern": "^C\\d+$"},
-                    "description": {"type": "string"},
-                    "datasheet_url": {"type": "string"},
-                    "overwrite": {"type": "boolean"}
-                },
-                "required": ["name", "symbol_library"],
-                "additionalProperties": false
-            }),
-            annotations: writes_project("Add component from file", false),
-        },
-        ToolDef {
             name: "search_parts",
-            description: "Search for a part: local libraries (stdlib generics, project components) always match offline; the lcsc tier searches JLCPCB's live assembly catalog with stock, price, and Basic/Extended class. Prefer class=basic with healthy stock. Results include the add_lcsc_component call to vendor one.",
+            description: "Search for a part: local libraries (stdlib generics, project components) always match offline; the lcsc tier searches JLCPCB's live assembly catalog with stock, price, and Basic/Extended class. Prefer class=basic with healthy stock. Results include the add_component call to vendor one.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -213,8 +223,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
             annotations: read_only_network("Search parts"),
         },
         ToolDef {
-            name: "get_lcsc_part",
-            description: "Pre-commit check for one LCSC part: identity, ref prefix, Basic/Extended class, stock, price breaks, MSL, lifecycle status, datasheet, key attributes, and whether usable CAD data exists (has_symbol/has_footprint/has_3d, pin/pad counts, first pin names — the best early warning for a bad EasyEDA part). Call this before add_lcsc_component.",
+            name: "get_part",
+            description: "Pre-commit check for one vendor part: identity, ref prefix, stock, price breaks, MSL, lifecycle status, datasheet, key attributes, and whether usable CAD data exists (has_symbol/has_footprint/has_3d, pin/pad counts, first pin names — the best early warning for a bad conversion). Call this before add_component. Vendors are addressed by argument key; lcsc (Basic/Extended class included) is currently the only vendor. Not the board BOM — that is get_bom.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -223,24 +233,31 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 "required": ["lcsc"],
                 "additionalProperties": false
             }),
-            annotations: read_only_network("Check LCSC part"),
+            annotations: read_only_network("Check vendor part"),
         },
         ToolDef {
-            name: "add_lcsc_component",
-            description: "THE way to add a real part: fetches the LCSC part's symbol, footprint, 3D model, and datasheet, converts them to KiCad, vendors everything into components/<name>.assets/, generates the wrapper .zen with every pin bound, and writes the part card with provenance. Converted assets are UNVERIFIED — cross-check pin/pad counts against the datasheet and relay warnings. The canvas rebuilds automatically.",
+            name: "add_component",
+            description: "THE way to add a component. With `lcsc` alone it sources the part wholesale: fetches the symbol, footprint, 3D model, and datasheet, converts them to KiCad, vendors everything into components/<name>.assets/, generates the wrapper .zen with every pin bound, and writes the part card with provenance — converted assets are UNVERIFIED; cross-check pin/pad counts against the datasheet and relay warnings. With `symbol_library` it builds the component from a user-supplied .kicad_sym already on disk (the escape hatch; `lcsc` then only records the part number in the card). The canvas rebuilds automatically.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$", "description": "Component name (becomes components/<name>.zen)"},
-                    "lcsc": {"type": "string", "pattern": "^C\\d+$", "description": "LCSC part number, e.g. C2040"},
-                    "include_3d": {"type": "boolean", "description": "Vendor the STEP model (default true; skipped over 8 MB)"},
-                    "fetch_datasheet": {"type": "boolean", "description": "Download the datasheet to datasheets/<name>.pdf (default true)"},
+                    "lcsc": {"type": "string", "pattern": "^C\\d+$", "description": "LCSC part number, e.g. C2040. Without symbol_library, the whole component is fetched from LCSC"},
+                    "symbol_library": {"type": "string", "description": "Local source: symbol file path (@stdlib/... or project-relative); must hold exactly one symbol"},
+                    "symbol_name": {"type": "string"},
+                    "footprint": {"type": "string", "description": "Footprint path (@stdlib/kicad-footprints/<lib>.pretty/<fp>.kicad_mod or project-relative). Omit to use the symbol's own footprint property. Only with symbol_library"},
+                    "mpn": {"type": "string", "description": "Only with symbol_library"},
+                    "manufacturer": {"type": "string", "description": "Only with symbol_library"},
+                    "description": {"type": "string", "description": "Only with symbol_library"},
+                    "datasheet_url": {"type": "string", "description": "Only with symbol_library"},
+                    "include_3d": {"type": "boolean", "description": "Vendor the STEP model (default true; skipped over 8 MB). Only when fetching from LCSC"},
+                    "fetch_datasheet": {"type": "boolean", "description": "Download the datasheet to datasheets/<name>.pdf (default true). Only when fetching from LCSC"},
                     "overwrite": {"type": "boolean"}
                 },
-                "required": ["name", "lcsc"],
+                "required": ["name"],
                 "additionalProperties": false
             }),
-            annotations: writes_project("Add LCSC component", true),
+            annotations: writes_project("Add component", true),
         },
         ToolDef {
             name: "fetch_datasheet",
@@ -269,8 +286,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
             annotations: read_only("Zener language guide"),
         },
         ToolDef {
-            name: "get_parts",
-            description: "The BOM view: resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC, Basic/Extended class) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance and an lcsc_classes summary (every Extended part adds a JLC setup fee). Requires an open etchable project.",
+            name: "get_bom",
+            description: "The BOM view: resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC, Basic/Extended class) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance and an lcsc_classes summary (every Extended part adds a JLC setup fee). Requires an open etchable project. Not a vendor catalog lookup — that is get_part.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -330,6 +347,7 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             ok(json!({"summary": summary, "diagnostics": diags, "hint": hint}))
         }),
         "check_layout" => with_build(state, |build| check_layout(build, args)),
+        "set_positions" => set_positions(state, args),
         "get_schematic" => with_build(state, |build| get_schematic(build, args)),
         "get_circuit_json" => with_build(state, |build| get_circuit_json(build, args)),
         "get_instance" => state.read(|s| match &s.build {
@@ -370,7 +388,11 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
                 Err(e) => err(format!("{e:#}")),
             }
         }),
-        "add_component" => {
+        // Source routing: `symbol_library` = build from a local .kicad_sym
+        // (lcsc, if given, is card metadata only); bare `lcsc` = fetch the
+        // whole part from LCSC. Vendor-specific args are keyed by vendor
+        // name, mirroring the part cards' `[vendors.<name>]` sections.
+        "add_component" if args.get("symbol_library").is_some() => {
             let (stdlib, root, req) = state.read(|s| {
                 (
                     s.stdlib_dir.clone(),
@@ -411,22 +433,30 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             let lcsc = crate::lcsc_tools::search_tier(query).await;
             ok(json!({"local": local.get("local"), "lcsc": lcsc}))
         }
-        "get_lcsc_part" => {
+        "get_part" => {
             let Some(lcsc) = args.get("lcsc").and_then(Value::as_str) else {
-                return err("missing required argument: lcsc".into());
+                return err(
+                    "missing vendor part number — pass it under its vendor key, e.g. \
+                     {\"lcsc\": \"C2040\"} (lcsc is currently the only vendor)"
+                        .into(),
+                );
             };
             ok(crate::lcsc_tools::get_part(lcsc).await)
         }
-        "add_lcsc_component" => {
+        "add_component" => {
             let (Some(name), Some(lcsc)) = (
                 args.get("name").and_then(Value::as_str),
                 args.get("lcsc").and_then(Value::as_str),
             ) else {
-                return err("missing required arguments: name, lcsc".into());
+                return err(
+                    "add_component needs a source: `lcsc` (fetch the part from LCSC) or \
+                     `symbol_library` (build from a local .kicad_sym), plus `name`"
+                        .into(),
+                );
             };
             let Some(root) = state.read(|s| s.project.as_ref().map(|p| p.root.clone())) else {
                 return err(
-                    "no project open — add_lcsc_component requires an etchable project".into(),
+                    "no project open — add_component requires an etchable project".into(),
                 );
             };
             let call = crate::lcsc_tools::AddLcscArgs {
@@ -464,12 +494,12 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
             }
         }
         "zener_reference" => ok(json!({"reference": crate::ZENER_REFERENCE})),
-        "get_parts" => state.read(|s| {
+        "get_bom" => state.read(|s| {
             let Some(project) = &s.project else {
-                return err("no project open — get_parts requires an etchable project".into());
+                return err("no project open — get_bom requires an etchable project".into());
             };
             match &s.build {
-                Some(build) => get_parts(project, build, args),
+                Some(build) => get_bom(project, build, args),
                 None => err("no build available yet — open a board or call build first".into()),
             }
         }),
@@ -596,11 +626,85 @@ fn check_layout(build: &BuildOutput, args: &Value) -> (String, bool) {
     }
     if total > 0 {
         result["hint"] = json!(
-            "These are drawing defects the user can see on the canvas. Fix them by adjusting \
-             `# pcb:sch` positions or restructuring, then re-run check_layout."
+            "These are drawing defects the user can see on the canvas. Fix them with \
+             set_positions (component centers come from get_circuit_json), then re-run \
+             check_layout."
         );
     }
     ok(result)
+}
+
+/// The structured writer for the machine-owned position layer: partial
+/// schematic-space moves are merged into the save-all map the layout's
+/// all-or-nothing authored rule expects, then written through
+/// `zen_build::write_positions` (the sole `# pcb:sch` author). The
+/// source-hash guard rejects merging layout data from a stale build.
+fn set_positions(state: &SharedState, args: &Value) -> (String, bool) {
+    let Some(map) = args.get("positions").and_then(Value::as_object) else {
+        return err("missing required argument: positions (map of path/refdes -> {x, y})".into());
+    };
+    if map.is_empty() {
+        return err("positions is empty — nothing to move".into());
+    }
+    state.read(|s| {
+        let Some(build) = &s.build else {
+            return err("no build available yet — open a board or call build first".into());
+        };
+        let Some(sch) = &build.schematic else {
+            return err("build produced no schematic (fix errors first)".into());
+        };
+        let Some(source) = &s.source else {
+            return err("no board open".into());
+        };
+        let current = match zen_build::content_hash(source) {
+            Ok(h) => h,
+            Err(e) => return err(format!("{e:#}")),
+        };
+        if s.source_hash.as_deref() != Some(current.as_str()) {
+            return err(
+                "board source changed since the last build — call build first so moves merge \
+                 against the current layout, then retry"
+                    .into(),
+            );
+        }
+
+        let mut moves = std::collections::BTreeMap::new();
+        for (key, v) in map {
+            let Some(path) = sch.resolve_path(key) else {
+                return err(format!(
+                    "no such instance: {key} (use paths like root.MODULE.R1.R or a refdes like R1)"
+                ));
+            };
+            let (Some(x), Some(y)) = (
+                v.get("x").and_then(Value::as_f64),
+                v.get("y").and_then(Value::as_f64),
+            ) else {
+                return err(format!("{key}: x and y are required numbers"));
+            };
+            moves.insert(
+                path.to_string(),
+                zen_build::MovedPosition {
+                    x,
+                    y,
+                    rotation: v.get("rotation").and_then(Value::as_f64),
+                },
+            );
+        }
+
+        let full = match zen_build::merge_positions(sch, &moves) {
+            Ok(f) => f,
+            Err(e) => return err(format!("{e:#}")),
+        };
+        if let Err(e) = zen_build::write_positions(source, &full) {
+            return err(format!("{e:#}"));
+        }
+        ok(json!({
+            "moved": moves.keys().collect::<Vec<_>>(),
+            "written": full.len(),
+            "hint": "Saved positions for every component (save-all). The canvas rebuilds \
+                     automatically — re-run check_layout to verify the fix.",
+        }))
+    })
 }
 
 fn with_build(
@@ -874,7 +978,7 @@ fn get_instance(
 }
 
 /// Resolved part selections, optionally scoped to an instance subtree.
-fn get_parts(
+fn get_bom(
     project: &zen_build::ProjectDoc,
     build: &BuildOutput,
     args: &Value,

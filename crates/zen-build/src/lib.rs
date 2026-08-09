@@ -31,7 +31,7 @@ pub use catalog::{
     list_library, resolve_library_path, symbol_pins, FootprintLibraryInfo, GenericInfo,
     LibraryListing, ProjectComponentInfo, SymbolLibraryInfo, SymbolPinInfo, SymbolPins,
 };
-pub use positions::{content_hash, write_positions};
+pub use positions::{content_hash, merge_positions, write_positions, MovedPosition};
 pub use scaffold::{
     add_component, install_component, AddComponentRequest, AddComponentResult, ExtraAsset,
     InstallComponentRequest,

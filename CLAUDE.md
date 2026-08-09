@@ -102,7 +102,10 @@ the trajectory).
   routes `*.toml`/datasheet changes to a project-only refresh
   (`project-changed` event, no build flash).
 - Agent scaffolding harness (docs/decisions/0003, amended by 0004 and
-  0006): the MCP surface is 18 tools; sourcing never needs Bash.
+  0006): the MCP surface is 18 tools; sourcing never needs Bash. Tool
+  names are vendor-neutral; vendor-specific arguments are keyed by vendor
+  name (`lcsc: "C…"`), mirroring the cards' `[vendors.<name>]` sections —
+  a future vendor adds an argument key, never a tool.
   `get_board_state` is the entry point — it fuses live orientation (build
   status, selection, top-level modules) with the working-rules manual
   (`crates/mcp/assets/board-manual.md`, compiled in as `mcp::BOARD_MANUAL`).
@@ -116,15 +119,17 @@ the trajectory).
   def carries MCP annotations (readOnly/destructive/idempotent/openWorld);
   new tools must too (a test enforces it). Real parts come from LCSC
   via `search_parts` (live JLCPCB tier: stock/price/Basic-vs-Extended) →
-  `get_lcsc_part` (pre-commit check incl. EDA-quality probe) →
-  `add_lcsc_component` (fetch → convert → `install_component`); `crates/lcsc`
-  owns the client/cache/converters (fetch/convert split: conversion is pure
-  and fixture-tested, network failures map to actionable statuses — never
-  opaque errors). `add_component` is the escape hatch for user-supplied
-  files. Basic-first is policy: search results rank in-stock Basic parts
-  first, the chosen class persists in the card (`[vendors.lcsc]
-  basic = true/false`), and `get_parts` (the BOM view) summarizes the
-  Basic/Extended split via `lcsc_classes` — keep that chain intact.
+  `get_part` (pre-commit check incl. EDA-quality probe) →
+  `add_component` (with `lcsc`: fetch → convert → `install_component`;
+  with `symbol_library`: the user-supplied-file escape hatch);
+  `crates/lcsc` owns the client/cache/converters (fetch/convert split:
+  conversion is pure and fixture-tested, network failures map to
+  actionable statuses — never opaque errors). Basic-first is policy:
+  search results rank in-stock Basic parts first, the chosen class
+  persists in the card (`[vendors.lcsc] basic = true/false`), and
+  `get_bom` (the BOM view — deliberately NOT named get_parts, to keep it
+  a letter apart from `get_part`) summarizes the Basic/Extended split via
+  `lcsc_classes` — keep that chain intact.
   Installed wrappers emit `Symbol(library="./…")` — the `./` prefix is
   load-bearing (a bare path parses as a package ref); converted symbols
   always carry `Manufacturer_Name`/`Manufacturer_Part_Number` so no
@@ -171,9 +176,15 @@ the trajectory).
   is what keeps the layout's all-or-nothing authored rule a non-issue),
   guarded by `base_hash` (= `BuildView.source_hash`) optimistic concurrency.
   `zen_build::write_positions` is the ONLY writer of `# pcb:sch` blocks
-  (merge semantics; never destroys foreign keys like `sym:`). There is no
-  watcher echo-suppression on purpose: the rebuild after a save IS the edit
-  loop's confirmation.
+  (merge semantics; never destroys foreign keys like `sym:`). The agent's
+  path to the same layer is the `set_positions` MCP tool: partial
+  schematic-space moves (y-up, get_circuit_json units) run through
+  `zen_build::merge_positions` (fills every unmoved component from its
+  authored or derived spot, ×25.4 / y-flip into `# pcb:sch` space) and the
+  same writer, guarded by the `CanvasState.source_hash` staleness token —
+  the agent must never text-edit position blocks. There is no watcher
+  echo-suppression on purpose: the rebuild after a save IS the edit loop's
+  confirmation.
 - The canvas view-model is Circuit JSON emitted by
   `crates/zen-build/src/circuit_json.rs` — the ONLY module that serializes
   the format (byte-deterministic; every id resolves via `id_map`, never parse

@@ -28,7 +28,7 @@ const ROW_GAP: f64 = 1.6;
 /// Authored `# pcb:sch` coordinates are in the pcb layout tool's mm-ish
 /// space; dividing by 25.4 lands boards in the same magnitude as computed
 /// layout.
-const AUTHORED_DIVISOR: f64 = 25.4;
+pub(crate) const AUTHORED_DIVISOR: f64 = 25.4;
 
 // ---------------------------------------------------------------------------
 // Shared ordering / pin-splitting helpers

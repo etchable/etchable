@@ -1,7 +1,17 @@
 # 0006 — MCP entry point, layout lint, and the shared board manual
 
 Status: accepted, 2026-08-09. Amends 0003/0004 (MCP surface 16 → 18
-tools).
+tools; later the same day the sourcing tools went vendor-neutral —
+`get_lcsc_part` → `get_part`, `add_lcsc_component` merged into
+`add_component` behind a source discriminator, `get_parts` → `get_bom` —
+and `set_positions` was added, landing at 18. Vendor-specific arguments
+are keyed by vendor name, mirroring the cards' `[vendors.<name>]`
+sections, so a future vendor adds an argument key, never a tool.
+`set_positions` follows from the batch-interface analysis: general design
+mutation stays on source edits, but machine-owned source regions —
+`# pcb:sch` blocks — get a structured batch writer riding
+`zen_build::write_positions`, closing the loop where check_layout told
+the agent to fix positions it could only text-edit).
 
 ## Decision
 

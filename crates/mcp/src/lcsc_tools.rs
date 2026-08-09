@@ -1,8 +1,8 @@
 //! LCSC-backed tools (docs/decisions/0004): the live-parts tier of
-//! `search_parts`, the pre-commit `get_lcsc_part` check, and
-//! `add_lcsc_component` — THE way to add a real part. Network failures are
-//! never opaque errors: blocked/offline map to actionable messages and
-//! cached data keeps working.
+//! `search_parts`, the lcsc vendor behind the pre-commit `get_part` check,
+//! and `add_component`'s LCSC fetch path — THE way to add a real part.
+//! Network failures are never opaque errors: blocked/offline map to
+//! actionable messages and cached data keeps working.
 
 use std::sync::OnceLock;
 
@@ -70,7 +70,7 @@ pub async fn search_tier(query: &str) -> Value {
                 .map(|h| {
                     let mut v = serde_json::to_value(h).unwrap_or_default();
                     v["add"] = json!(format!(
-                        "add_lcsc_component{{name: \"<YourName>\", lcsc: \"{}\"}}",
+                        "add_component{{name: \"<YourName>\", lcsc: \"{}\"}}",
                         h.lcsc
                     ));
                     v
@@ -82,7 +82,7 @@ pub async fn search_tier(query: &str) -> Value {
                 "as_of": page.as_of,
                 "cached": page.cached,
                 "results": results,
-                "hint": "Results are ranked Basic-first. If a class=basic part satisfies the requirement, use it — every Extended part adds a JLC setup fee; pick Extended only when no Basic fits, and tell the user why. Stock 0 is unbuildable. Run get_lcsc_part before committing to one.",
+                "hint": "Results are ranked Basic-first. If a class=basic part satisfies the requirement, use it — every Extended part adds a JLC setup fee; pick Extended only when no Basic fits, and tell the user why. Stock 0 is unbuildable. Run get_part before committing to one.",
             })
         }
         Err(e) => fetch_error_payload(&e),
@@ -175,7 +175,7 @@ async fn probe_eda(
         .find(|e| e.number.eq_ignore_ascii_case(lcsc_code))
     else {
         return Ok(json!({"has_symbol": false, "has_footprint": false, "has_3d": false,
-            "hint": "no EasyEDA CAD data for this part — it cannot be added with add_lcsc_component"}));
+            "hint": "no EasyEDA CAD data for this part — add_component cannot fetch it from LCSC"}));
     };
     let component = lcsc::easyeda::api::component(client, cache, &entry.uuid).await?;
     let parsed = lcsc::easyeda::doc::parse_component(&component)

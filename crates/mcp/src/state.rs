@@ -27,6 +27,10 @@ pub struct CanvasState {
     pub selection: Selection,
     /// The etchable project this board belongs to, when opened as one.
     pub project: Option<zen_build::ProjectDoc>,
+    /// SHA-256 of `source` when `build` was recorded — the staleness token
+    /// `set_positions` checks so it never merges layout data from an old
+    /// build with a newer file.
+    pub source_hash: Option<String>,
     /// The materialized stdlib dir, known after the first workspace open.
     pub stdlib_dir: Option<PathBuf>,
     /// Monotonic build counter (bumped on every completed build).
@@ -60,6 +64,10 @@ impl SharedState {
 
     pub fn set_build(&self, output: BuildOutput) {
         self.write(|s| {
+            s.source_hash = s
+                .source
+                .as_deref()
+                .and_then(|p| zen_build::content_hash(p).ok());
             s.build = Some(output);
             s.build_seq += 1;
         });

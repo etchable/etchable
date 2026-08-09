@@ -97,7 +97,7 @@ fn fixture_part_installs_loads_and_builds() {
         Some(&serde_json::json!(false))
     );
     // The JLC class is BOM data: recorded in the card, surfaced by
-    // resolve_parts/get_parts so the user sees the Basic/Extended split.
+    // resolve_parts/get_bom so the user sees the Basic/Extended split.
     assert!(installed.card_text.contains("basic = false"));
     assert_eq!(
         card.part.vendors.get("lcsc"),
