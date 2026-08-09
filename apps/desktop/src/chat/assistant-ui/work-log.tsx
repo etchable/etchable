@@ -9,6 +9,7 @@ import {
   CaretDown,
   Circuitry,
   CircleNotch,
+  Crosshair,
   FileText,
   Globe,
   Hammer,
@@ -51,7 +52,7 @@ const str = (v: unknown): string | undefined =>
 
 const basename = (p?: string): string | undefined => p?.split("/").pop();
 
-/** The 18 canvas tools: icon + past/active headings + which arg previews. */
+/** The 19 canvas tools: icon + past/active headings + which arg previews. */
 const MCP_DISPLAY: Record<
   string,
   { icon: Icon; heading: string; active?: string; arg?: string }
@@ -80,6 +81,11 @@ const MCP_DISPLAY: Record<
     icon: PencilSimple,
     heading: "Arranged the canvas",
     active: "Arranging the canvas",
+  },
+  find_empty_space: {
+    icon: Crosshair,
+    heading: "Found open space",
+    active: "Finding open space",
   },
   get_bom: { icon: MagnifyingGlass, heading: "Read the BOM", active: "Reading the BOM" },
   build: { icon: Hammer, heading: "Rebuilt the board", active: "Rebuilding the board" },

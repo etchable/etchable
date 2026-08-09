@@ -52,6 +52,9 @@ pub(crate) struct RoutedNet {
     pub(crate) chains: Vec<Chain>,
     /// Junction dots where branch chains meet the trunk.
     pub(crate) junctions: Vec<(f64, f64)>,
+    /// Partially routed: only attachment stubs are wired; every pin the
+    /// chains don't touch still gets its net label at emission.
+    pub(crate) partial: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -85,14 +88,122 @@ pub(crate) fn route_nets(layout: &Layout, sch: &SchematicDoc) -> BTreeMap<String
             RoutedNet {
                 chains: vec![route_pair(&terms[0], &terms[1])],
                 junctions: Vec::new(),
+                partial: false,
             }
         } else {
             route_trunk(&terms)
         };
         out.insert(name.clone(), routed);
     }
+
+    // Attachment stubs (layout.stubs): wire a rail passive to the pin it
+    // serves even when the whole net stays labeled. Fully routed nets skip
+    // them (the wire already exists).
+    for stub in &layout.stubs {
+        let (Some((ta, net)), Some((tb, _))) =
+            (stub_terminal(layout, &stub.a), stub_terminal(layout, &stub.b))
+        else {
+            continue;
+        };
+        if out.get(&net).is_some_and(|r| !r.partial) {
+            continue;
+        }
+        let chain = route_pair(&ta, &tb);
+        out.entry(net)
+            .or_insert_with(|| RoutedNet {
+                chains: Vec::new(),
+                junctions: Vec::new(),
+                partial: true,
+            })
+            .chains
+            .push(chain);
+    }
+    // Never draw a wire through a component body. The router does no
+    // detours (yet); a chain that crosses a body it doesn't terminate on
+    // falls back to labels — a labeled net is honest, a wire through a
+    // chip is wrong.
+    let mut dropped: Vec<String> = Vec::new();
+    for (name, routed) in out.iter_mut() {
+        if routed.partial {
+            routed.chains.retain(|c| chain_clear(layout, c));
+            if routed.chains.is_empty() {
+                dropped.push(name.clone());
+            }
+        } else if routed.chains.iter().any(|c| !chain_clear(layout, c)) {
+            dropped.push(name.clone());
+        }
+    }
+    for name in dropped {
+        out.remove(&name);
+    }
+
     split_crossings(&mut out);
     out
+}
+
+/// Margin by which bodies shrink before the wire test — wires legitimately
+/// hug edges (exit stubs, boundary channels).
+const BODY_MARGIN: f64 = 0.05;
+
+/// True when no edge of the chain passes through a component body. No
+/// owner exemption: pins sit ON the body border and boxes shrink by
+/// BODY_MARGIN, so legitimate pin-touching edges never enter the interior
+/// — but a U-turn back across the chain's own component must still fail.
+fn chain_clear(layout: &Layout, chain: &Chain) -> bool {
+    for edge in &chain.edges {
+        for cl in layout.comps.values() {
+            let (x0, y0) = (
+                cl.center.0 - cl.size.0 / 2.0 + BODY_MARGIN,
+                cl.center.1 - cl.size.1 / 2.0 + BODY_MARGIN,
+            );
+            let (x1, y1) = (
+                cl.center.0 + cl.size.0 / 2.0 - BODY_MARGIN,
+                cl.center.1 + cl.size.1 / 2.0 - BODY_MARGIN,
+            );
+            if x1 - x0 <= EPS || y1 - y0 <= EPS {
+                continue;
+            }
+            let crossed = if (edge.from.1 - edge.to.1).abs() < EPS {
+                let y = edge.from.1;
+                let (sx0, sx1) = (edge.from.0.min(edge.to.0), edge.from.0.max(edge.to.0));
+                y > y0 + EPS && y < y1 - EPS && sx0 < x1 - EPS && sx1 > x0 + EPS
+            } else if (edge.from.0 - edge.to.0).abs() < EPS {
+                let x = edge.from.0;
+                let (sy0, sy1) = (edge.from.1.min(edge.to.1), edge.from.1.max(edge.to.1));
+                x > x0 + EPS && x < x1 - EPS && sy0 < y1 - EPS && sy1 > y0 + EPS
+            } else {
+                false
+            };
+            if crossed {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Terminal for one end of an attachment stub, plus its net name.
+fn stub_terminal(
+    layout: &Layout,
+    (comp, pin): &(String, String),
+) -> Option<(Terminal, String)> {
+    let cl = layout.comps.get(comp)?;
+    let p = cl.pins.iter().find(|pl| &pl.name == pin)?;
+    let dir = match p.side {
+        Side::Left => (-1.0, 0.0),
+        Side::Right => (1.0, 0.0),
+        Side::Top => (0.0, -1.0),
+        Side::Bottom => (0.0, 1.0),
+    };
+    Some((
+        Terminal {
+            comp: comp.clone(),
+            pin: pin.clone(),
+            pos: (p.x, p.y),
+            dir,
+        },
+        p.net.clone()?,
+    ))
 }
 
 /// Signal net, 2..=4 resolvable ports, compact span.
@@ -251,7 +362,11 @@ fn route_trunk(terms: &[Terminal]) -> RoutedNet {
             });
             push_unique(&mut junctions, exits[i]);
         }
-        return RoutedNet { chains, junctions };
+        return RoutedNet {
+            chains,
+            junctions,
+            partial: false,
+        };
     }
 
     // Vertical trunk at the median exit x.
@@ -277,7 +392,11 @@ fn route_trunk(terms: &[Terminal]) -> RoutedNet {
         });
         push_unique(&mut junctions, (x_t, e.1));
     }
-    RoutedNet { chains, junctions }
+    RoutedNet {
+        chains,
+        junctions,
+        partial: false,
+    }
 }
 
 fn push_unique(points: &mut Vec<(f64, f64)>, p: (f64, f64)) {
@@ -340,11 +459,10 @@ fn split_crossings(routes: &mut BTreeMap<String, RoutedNet>) {
                 if cuts.is_empty() {
                     new_edges.push(*edge);
                 } else {
-                    // Sort cuts along the direction of travel.
-                    let dir = (
-                        (edge.to.0 - edge.from.0).signum(),
-                        (edge.to.1 - edge.from.1).signum(),
-                    );
+                    // Sort cuts along the direction of travel. NOT bare
+                    // signum: f64::signum(0.0) is +1.0, which would walk a
+                    // horizontal edge's pieces off at 45 degrees.
+                    let dir = (axis_dir(edge.to.0 - edge.from.0), axis_dir(edge.to.1 - edge.from.1));
                     cuts.sort_by(|p, q| {
                         let dp = (p.0 - edge.from.0) * dir.0 + (p.1 - edge.from.1) * dir.1;
                         let dq = (q.0 - edge.from.0) * dir.0 + (q.1 - edge.from.1) * dir.1;
@@ -357,6 +475,15 @@ fn split_crossings(routes: &mut BTreeMap<String, RoutedNet>) {
             }
             chain.edges = new_edges;
         }
+    }
+}
+
+/// Zero-safe direction component: 0.0 stays 0.0 (f64::signum(0.0) is +1.0).
+fn axis_dir(d: f64) -> f64 {
+    if d.abs() < EPS {
+        0.0
+    } else {
+        d.signum()
     }
 }
 
@@ -520,6 +647,49 @@ mod tests {
         assert!((hop_len - HOP).abs() < 1e-9);
         assert_eq!(parts[0].from, edge.from);
         assert_eq!(parts[2].to, edge.to);
+    }
+
+    #[test]
+    fn crossing_split_keeps_edges_axis_aligned() {
+        // Regression: signum(0.0) is +1.0, which sent split pieces of
+        // horizontal edges off at 45 degrees. Route two crossing nets end
+        // to end and require every emitted edge to stay axis-aligned.
+        let mut routes = BTreeMap::new();
+        routes.insert(
+            "H".to_string(),
+            RoutedNet {
+                chains: vec![Chain {
+                    edges: edges_of(&[(0.0, 1.0), (3.0, 1.0)]),
+                    from_port: None,
+                    to_port: None,
+                }],
+                junctions: vec![],
+                partial: false,
+            },
+        );
+        routes.insert(
+            "V".to_string(),
+            RoutedNet {
+                chains: vec![Chain {
+                    edges: edges_of(&[(1.5, 0.0), (1.5, 2.0)]),
+                    from_port: None,
+                    to_port: None,
+                }],
+                junctions: vec![],
+                partial: false,
+            },
+        );
+        split_crossings(&mut routes);
+        for routed in routes.values() {
+            for chain in &routed.chains {
+                for e in &chain.edges {
+                    let axis = (e.from.0 - e.to.0).abs() < 1e-9
+                        || (e.from.1 - e.to.1).abs() < 1e-9;
+                    assert!(axis, "diagonal edge: {:?} -> {:?}", e.from, e.to);
+                }
+                assert_contiguous(chain);
+            }
+        }
     }
 
     #[test]

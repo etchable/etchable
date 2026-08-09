@@ -109,7 +109,7 @@ the trajectory).
   (the entry can change) and other `*.toml`/datasheet changes to a
   project-only refresh (`project-changed` event, no build flash).
 - Agent scaffolding harness (docs/decisions/0003, amended by 0004 and
-  0006): the MCP surface is 18 tools; sourcing never needs Bash. Tool
+  0006): the MCP surface is 19 tools; sourcing never needs Bash. Tool
   names are vendor-neutral; vendor-specific arguments are keyed by vendor
   name (`lcsc: "C…"`), mirroring the cards' `[vendors.<name>]` sections —
   a future vendor adds an argument key, never a tool.
@@ -204,10 +204,22 @@ the trajectory).
   this. Symbol geometry lives in `crates/zen-build/src/symbol_geom.rs`,
   GENERATED from the pinned schematic-symbols package by
   `pnpm --filter @etchable/desktop gen:symbol-geom` (CI runs `--check`);
+  net-label flag metrics likewise live in the GENERATED
+  `crates/zen-build/src/text_metrics.rs`, extracted from the pinned
+  circuit-to-svg by `gen:text-metrics` (also `--check` in CI) — layout
+  spacing and check_layout measure exactly what the renderer draws;
   emitted glyph ports must reproduce the symbol's native offsets verbatim
   (symbol coords ARE schematic coords, y-up) or the viewer's angle-matcher
   silently drops the glyph. Pin-mapping failures fall back to chip boxes —
-  never render a wrong glyph. The only UI module importing tscircuit
+  never render a wrong glyph. The derived layout is humanized (decision
+  0008): single-component generic modules collapse into their parent,
+  two-pin rail passives draw as vertical idioms (pull-up above partner,
+  pull-down below, decoupler bank, fused dividers), connected pins
+  waterline-align, and rail attachments get stub wires with label
+  suppression at the stubbed pins (`Layout::stubs` →
+  `RoutedNet::partial`). Rail kinds infer from conventional net names
+  when boards use bare `Net(...)` (convert.rs; typed Power()/Ground()
+  always wins). Authored `# pcb:sch` positions bypass all of this. The only UI module importing tscircuit
   packages is
   `apps/desktop/src/circuit/`. tscircuit npm deps are pinned exact and bumped
   as a set, then re-validated:

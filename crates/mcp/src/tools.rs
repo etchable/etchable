@@ -183,6 +183,23 @@ pub fn tool_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "find_empty_space",
+            description: "A clear spot on the canvas before you place something: returns the CENTER (schematic units, y-up — the same space set_positions takes and get_circuit_json reports) of a width x height rectangle free of symbols, label flags, and module boxes, adjacent to `anchor` in `direction`. Use it with set_positions when adding components to a hand-arranged board so the new part lands in open space instead of on top of the drawing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "width": {"type": "number", "minimum": 0.1, "description": "Needed width in schematic units (a passive is ~1, a small chip ~2-4)"},
+                    "height": {"type": "number", "minimum": 0.1, "description": "Needed height in schematic units"},
+                    "direction": {"type": "string", "enum": ["top", "right", "bottom", "left"], "description": "Which side of the anchor to search (default right)"},
+                    "padding": {"type": "number", "description": "Minimum clearance from existing geometry (default 0.5)"},
+                    "anchor": {"type": "string", "description": "Instance path or refdes to search beside; omit to search beside the whole drawing"}
+                },
+                "required": ["width", "height"],
+                "additionalProperties": false
+            }),
+            annotations: read_only("Find empty space"),
+        },
+        ToolDef {
             name: "list_library",
             description: "Inventory of everything buildable WITHOUT the network: stdlib generics (with their config/io surface) and this project's components. Call this FIRST when sourcing parts. Real parts beyond the generics come from LCSC via search_parts + add_component.",
             input_schema: json!({
@@ -348,6 +365,44 @@ pub async fn call_tool(state: &SharedState, name: &str, args: &Value) -> (String
         }),
         "check_layout" => with_build(state, |build| check_layout(build, args)),
         "set_positions" => set_positions(state, args),
+        "find_empty_space" => with_build(state, |build| {
+            let Some(sch) = &build.schematic else {
+                return err("build produced no schematic (fix errors first)".into());
+            };
+            let (Some(width), Some(height)) = (
+                args.get("width").and_then(Value::as_f64),
+                args.get("height").and_then(Value::as_f64),
+            ) else {
+                return err("missing required arguments: width, height".into());
+            };
+            let direction = match args.get("direction").and_then(Value::as_str) {
+                None | Some("right") => zen_build::SpaceDirection::Right,
+                Some("left") => zen_build::SpaceDirection::Left,
+                Some("top") => zen_build::SpaceDirection::Top,
+                Some("bottom") => zen_build::SpaceDirection::Bottom,
+                Some(other) => {
+                    return err(format!(
+                        "unknown direction {other:?} (top | right | bottom | left)"
+                    ))
+                }
+            };
+            let padding = args.get("padding").and_then(Value::as_f64).unwrap_or(0.5);
+            let anchor = match args.get("anchor").and_then(Value::as_str) {
+                Some(raw) => match sch.resolve_path(raw) {
+                    Some(p) => Some(p.to_string()),
+                    None => return err(format!("no such instance: {raw}")),
+                },
+                None => None,
+            };
+            match zen_build::find_empty_space(sch, width, height, direction, padding, anchor.as_deref())
+            {
+                Some((x, y)) => ok(json!({
+                    "center": {"x": x, "y": y},
+                    "hint": "Pass this center to set_positions for the new component.",
+                })),
+                None => err("no geometry to anchor against".into()),
+            }
+        }),
         "get_schematic" => with_build(state, |build| get_schematic(build, args)),
         "get_circuit_json" => with_build(state, |build| get_circuit_json(build, args)),
         "get_instance" => state.read(|s| match &s.build {

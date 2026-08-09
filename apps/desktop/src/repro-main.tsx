@@ -179,15 +179,29 @@ const PERMISSION: ChatItem[] = [
 // ?state=canvas renders the schematic canvas with the demo board's circuit
 // json (regenerate src/repro-fixtures/demo-circuit.json with
 // `cargo run -q -p zen-build -- examples/demo/board.zen --circuit-json`).
-// Exercises camera lock across container resizes.
+// Pass &fixture=<url> (e.g. /@fs/abs/path.json via the vite dev server) to
+// view any board's circuit json instead. Exercises camera lock across
+// container resizes.
 function CanvasRepro() {
+  const fixtureUrl = new URLSearchParams(location.search).get("fixture");
+  const [doc, setDoc] = React.useState<{
+    elements: BuildView["circuit_json"];
+    id_map: Record<string, string>;
+  }>(demoCircuit as never);
+  React.useEffect(() => {
+    if (!fixtureUrl) return;
+    void fetch(fixtureUrl)
+      .then((r) => r.json())
+      .then(setDoc)
+      .catch((e) => console.error("fixture load failed", e));
+  }, [fixtureUrl]);
   const view: BuildView = {
     version: 3,
-    source: "examples/demo/board.zen",
+    source: fixtureUrl ?? "examples/demo/board.zen",
     schematic: null,
     diagnostics: [],
-    circuit_json: (demoCircuit as { elements: BuildView["circuit_json"] }).elements,
-    id_map: (demoCircuit as { id_map: Record<string, string> }).id_map,
+    circuit_json: doc.elements,
+    id_map: doc.id_map,
     source_hash: null,
   };
   const [selection, setSelection] = React.useState<string[]>([]);

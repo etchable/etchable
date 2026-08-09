@@ -209,7 +209,7 @@ function applyAgentEvent(items: ChatItem[], ev: AgentEvent): ChatItem[] {
 
 export const MCP_PREFIX = "mcp__etchable__";
 
-/** The 18 canvas tools (docs/decisions/0003+0004+0006), as live activities. */
+/** The 19 canvas tools (docs/decisions/0003+0004+0006), as live activities. */
 const MCP_ACTIVITY: Record<string, string> = {
   get_board_state: "Getting oriented…",
   get_selection: "Checking the selection…",
@@ -219,6 +219,7 @@ const MCP_ACTIVITY: Record<string, string> = {
   get_diagnostics: "Checking diagnostics…",
   check_layout: "Checking the layout…",
   set_positions: "Arranging the canvas…",
+  find_empty_space: "Finding open space…",
   get_bom: "Reading the BOM…",
   build: "Rebuilding…",
   list_library: "Browsing the library…",

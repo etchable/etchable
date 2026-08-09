@@ -118,6 +118,11 @@ tell the user and continue with local parts instead of probing.
 - Every passive gets an explicit mpn plus `[vendors.lcsc]` in its card —
   otherwise house-part substitution happens silently. Verify LCSC
   C-numbers against the value and prefer JLC Basic parts.
+- Declare rails with `Power("V3V3")` / `Ground("GND")`, not bare
+  `Net(...)` — the canvas draws rail idioms (vertical pull-ups,
+  decoupler banks, rail flags) from the net kind, and typed rails also
+  strengthen ERC. Conventional names (GND, V3V3, VBUS) are inferred as a
+  fallback, but typed is authoritative.
 
 ## Verify as you go
 
@@ -134,5 +139,10 @@ until the errors are fixed.
   labels. Scope it to what you just touched and fix problems before
   moving on: read the centers from `get_circuit_json`, move components
   with one batched `set_positions` call, then re-run `check_layout`.
+- Placing something new (or fixing an overlap): `find_empty_space` returns
+  the center of a clear width×height spot beside an anchor (or the whole
+  drawing) — pass it straight to `set_positions`. On a hand-arranged
+  board, set the position of a newly added component right away so the
+  layout stays authored.
 - Before each burst of tool calls, say in one short sentence what you are
   about to do and why.

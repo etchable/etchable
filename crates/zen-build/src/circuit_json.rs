@@ -516,7 +516,10 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
         );
 
         // Routed nets read through wires; everything else labels every pin.
-        if let Some(routed) = routes.get(net_name) {
+        // Partially routed nets (attachment stubs) get both: wires for the
+        // stubbed pins, labels for the rest.
+        let routed = routes.get(net_name);
+        if let Some(routed) = routed {
             for (k, chain) in routed.chains.iter().enumerate() {
                 let schtrace_id = if k == 0 {
                     format!("schtrace:{net_name}")
@@ -567,10 +570,26 @@ fn emit(sch: &SchematicDoc) -> CircuitJsonDoc {
                     }),
                 );
             }
-            continue;
+            if !routed.partial {
+                continue;
+            }
         }
 
+        // Pins already coupled by a stub wire carry no label.
+        let covered: std::collections::HashSet<(&str, &str)> = routed
+            .map(|r| {
+                r.chains
+                    .iter()
+                    .flat_map(|c| c.from_port.iter().chain(c.to_port.iter()))
+                    .map(|(c, p)| (c.as_str(), p.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         for port in &net.ports {
+            if covered.contains(&(port.component.as_str(), port.pin.as_str())) {
+                continue;
+            }
             let Some(cl) = layout.comps.get(&port.component) else {
                 continue;
             };

@@ -4,9 +4,9 @@
 //! catch the visual defects diagnostics can't express: symbols drawn on top
 //! of each other, wires cutting through symbol bodies (the router does no
 //! obstacle avoidance — see route.rs), and net labels colliding with
-//! neighbors. Label extents are estimated (the renderer owns font metrics),
-//! so label checks use deliberately conservative sizes: a reported overlap
-//! is near-certainly real, at the cost of missing marginal ones.
+//! neighbors. Label extents are EXACT: text_metrics mirrors the renderer's
+//! own per-glyph table and flag formula, so what this lint measures is
+//! what the canvas draws.
 
 use std::collections::BTreeSet;
 
@@ -16,12 +16,10 @@ use crate::circuit_json::NET_LABEL_OFFSET;
 use crate::layout::{compute_layout, Layout, Side};
 use crate::model::SchematicDoc;
 use crate::route::route_nets;
+use crate::text_metrics::{net_label_len, NET_LABEL_HEIGHT};
 
-/// Conservative net-label text estimate (world units per character / tall).
-const LABEL_CHAR_W: f64 = 0.08;
-const LABEL_H: f64 = 0.16;
-/// Label boxes are scaled down by this factor before testing.
-const LABEL_SHRINK: f64 = 0.75;
+/// Slack inside exact label boxes so kissing flags don't report.
+const LABEL_MARGIN: f64 = 0.02;
 /// Component boxes shrink by this margin for wire tests, so wires hugging a
 /// body edge (exit stubs, channel runs) don't count as "through" it.
 const WIRE_MARGIN: f64 = 0.05;
@@ -242,7 +240,159 @@ pub fn check_layout(sch: &SchematicDoc, scope: Option<&str>) -> LayoutReport {
     }
 }
 
-/// Mirror of circuit_json's net-label placement, with estimated extents.
+/// Where to search for empty space, relative to the anchor (or the whole
+/// drawing). Directions are in SCHEMATIC orientation: "top" is visually
+/// above (world y decreasing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaceDirection {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+/// Find a clear `width` x `height` spot adjacent to `anchor` (a resolved
+/// instance path; `None` = beside the whole drawing) in `direction`,
+/// `padding` away from everything. A greedy directional sweep over real
+/// geometry — component bodies, label flags, module boxes — in the spirit
+/// of Pencil's FindEmptySpace: start next to the anchor, walk obstacles
+/// sorted along the direction, and push past every one that intersects.
+/// Returns the CENTER of the free rect in schematic coordinates (y-up),
+/// the same space `set_positions` and `get_circuit_json` speak.
+pub fn find_empty_space(
+    sch: &SchematicDoc,
+    width: f64,
+    height: f64,
+    direction: SpaceDirection,
+    padding: f64,
+    anchor: Option<&str>,
+) -> Option<(f64, f64)> {
+    let layout = compute_layout(sch);
+    let routes = route_nets(&layout, sch);
+
+    // Obstacles: bodies, module rects, and exact label flags.
+    let mut obstacles: Vec<Box2> = layout
+        .comps
+        .values()
+        .map(|cl| Box2::from_center(cl.center, cl.size))
+        .collect();
+    obstacles.extend(layout.modules.values().map(|r| Box2 {
+        x0: r.x,
+        y0: r.y,
+        x1: r.x + r.w,
+        y1: r.y + r.h,
+    }));
+    obstacles.extend(label_boxes(&layout, sch, &routes).into_iter().map(|l| l.rect));
+
+    let anchor_box = match anchor {
+        Some(path) => {
+            let prefix = format!("{path}.");
+            let mut b: Option<Box2> = None;
+            let mut grow = |o: Box2| {
+                b = Some(match b {
+                    None => o,
+                    Some(cur) => Box2 {
+                        x0: cur.x0.min(o.x0),
+                        y0: cur.y0.min(o.y0),
+                        x1: cur.x1.max(o.x1),
+                        y1: cur.y1.max(o.y1),
+                    },
+                });
+            };
+            for (p, cl) in &layout.comps {
+                if p == path || p.starts_with(&prefix) {
+                    grow(Box2::from_center(cl.center, cl.size));
+                }
+            }
+            if let Some(r) = layout.modules.get(path) {
+                grow(Box2 {
+                    x0: r.x,
+                    y0: r.y,
+                    x1: r.x + r.w,
+                    y1: r.y + r.h,
+                });
+            }
+            Some(b?)
+        }
+        None => None,
+    };
+    let anchor_box = anchor_box.or_else(|| {
+        // Whole-drawing bounds.
+        obstacles.iter().copied().reduce(|a, o| Box2 {
+            x0: a.x0.min(o.x0),
+            y0: a.y0.min(o.y0),
+            x1: a.x1.max(o.x1),
+            y1: a.y1.max(o.y1),
+        })
+    });
+    let Some(ab) = anchor_box else {
+        // Empty board: origin.
+        return Some((width / 2.0, -height / 2.0));
+    };
+
+    // Candidate starts adjacent to the anchor; each intersecting obstacle
+    // pushes it further along the direction. World coordinates (y-down):
+    // schematic "top" = world y decreasing.
+    let mut cand = Box2 {
+        x0: ab.x0,
+        y0: ab.y0,
+        x1: ab.x0 + width,
+        y1: ab.y0 + height,
+    };
+    let push = |cand: &mut Box2, o: &Box2| match direction {
+        SpaceDirection::Top => {
+            let y0 = (o.y0 - padding - height).min(cand.y0);
+            cand.y0 = y0;
+            cand.y1 = y0 + height;
+        }
+        SpaceDirection::Bottom => {
+            let y0 = (o.y1 + padding).max(cand.y0);
+            cand.y0 = y0;
+            cand.y1 = y0 + height;
+        }
+        SpaceDirection::Left => {
+            let x0 = (o.x0 - padding - width).min(cand.x0);
+            cand.x0 = x0;
+            cand.x1 = x0 + width;
+        }
+        SpaceDirection::Right => {
+            let x0 = (o.x1 + padding).max(cand.x0);
+            cand.x0 = x0;
+            cand.x1 = x0 + width;
+        }
+    };
+    push(&mut cand, &ab);
+
+    let mut sorted = obstacles;
+    sorted.sort_by(|a, b| {
+        let key = |o: &Box2| match direction {
+            SpaceDirection::Top => -o.y0,
+            SpaceDirection::Bottom => o.y0,
+            SpaceDirection::Left => -o.x0,
+            SpaceDirection::Right => o.x0,
+        };
+        key(a)
+            .partial_cmp(&key(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let padded = |o: &Box2| Box2 {
+        x0: o.x0 - padding,
+        y0: o.y0 - padding,
+        x1: o.x1 + padding,
+        y1: o.y1 + padding,
+    };
+    for o in &sorted {
+        if cand.intersects(&padded(o)) {
+            push(&mut cand, o);
+        }
+    }
+
+    // World center -> schematic center (y flips).
+    Some(((cand.x0 + cand.x1) / 2.0, -((cand.y0 + cand.y1) / 2.0)))
+}
+
+/// Mirror of circuit_json's net-label placement, with EXACT extents from
+/// the renderer's own glyph metrics.
 fn label_boxes(
     layout: &Layout,
     sch: &SchematicDoc,
@@ -253,8 +403,9 @@ fn label_boxes(
         if routes.contains_key(net_name) {
             continue;
         }
-        let w = net_name.len() as f64 * LABEL_CHAR_W;
-        let h = LABEL_H;
+        // Exact renderer geometry (text_metrics mirrors circuit-to-svg).
+        let w = net_label_len(net_name);
+        let h = NET_LABEL_HEIGHT;
         for port in &net.ports {
             let Some(cl) = layout.comps.get(&port.component) else {
                 continue;
@@ -296,13 +447,11 @@ fn label_boxes(
                     y1: ay + h,
                 },
             };
-            let inset_x = (rect.x1 - rect.x0) * (1.0 - LABEL_SHRINK) / 2.0;
-            let inset_y = (rect.y1 - rect.y0) * (1.0 - LABEL_SHRINK) / 2.0;
             let rect = Box2 {
-                x0: rect.x0 + inset_x,
-                x1: rect.x1 - inset_x,
-                y0: rect.y0 + inset_y,
-                y1: rect.y1 - inset_y,
+                x0: rect.x0 + LABEL_MARGIN,
+                x1: rect.x1 - LABEL_MARGIN,
+                y0: rect.y0 + LABEL_MARGIN,
+                y1: rect.y1 - LABEL_MARGIN,
             };
             out.push(LabelBox {
                 net: net_name.clone(),
@@ -439,6 +588,31 @@ mod tests {
         let report_far = check_layout(&other, Some("root.NOPE"));
         assert!(report_far.problems.is_empty());
         assert_eq!(report_far.components, 0);
+    }
+
+    #[test]
+    fn empty_space_clears_all_geometry() {
+        let sch = board(&[("A", (0.0, 0.0)), ("B", (200.0, 0.0))]);
+        let layout = compute_layout(&sch);
+        let right_edge = layout
+            .comps
+            .values()
+            .map(|c| c.center.0 + c.size.0 / 2.0)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        let (x, _y) = find_empty_space(&sch, 2.0, 1.0, SpaceDirection::Right, 0.5, None)
+            .expect("space found");
+        // Returned center must sit fully right of everything (labels incl.).
+        assert!(
+            x - 1.0 >= right_edge,
+            "x {x} vs right edge {right_edge}"
+        );
+
+        // Anchored to one component, on the left: clear of that component.
+        let (ax, _) = find_empty_space(&sch, 1.0, 1.0, SpaceDirection::Left, 0.5, Some("root.A"))
+            .expect("anchored space");
+        let a = &layout.comps["root.A"];
+        assert!(ax + 0.5 <= a.center.0 - a.size.0 / 2.0);
     }
 
     #[test]

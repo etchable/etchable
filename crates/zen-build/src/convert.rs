@@ -49,6 +49,47 @@ fn kind_of(kind: pcb_sch::InstanceKind) -> InstanceKind {
     }
 }
 
+/// Boards that declare rails as bare `Net("GND")` instead of typed
+/// `Ground()`/`Power()` nets still deserve rail treatment in the drawing
+/// (labels instead of wire spaghetti, vertical rail passives). Infer the
+/// kind from unmistakable rail names; anything ambiguous stays Normal.
+/// Presentation-only: diagnostics and ERC never read the inferred kind.
+fn infer_rail_kind(name: &str, kind: &str) -> String {
+    // Typed nets (`Power(...)`, `Ground(...)`) already carry their kind;
+    // only untyped ones ("Net") are eligible for inference.
+    if kind == "Power" || kind == "Ground" {
+        return kind.to_string();
+    }
+    let upper = name.to_ascii_uppercase();
+    let ground = upper == "GND"
+        || upper == "AGND"
+        || upper == "DGND"
+        || upper == "PGND"
+        || upper == "GROUND"
+        || upper.starts_with("VSS");
+    if ground {
+        return "Ground".into();
+    }
+    // V3V3 / V1V8 / 3V3 / 5V style rail names, plus the VCC/VDD/VBUS families.
+    let volty = |s: &str| {
+        let b = s.as_bytes();
+        (b.first().is_some_and(u8::is_ascii_digit) && s.contains('V'))
+            || (b.first() == Some(&b'V')
+                && b.get(1).is_some_and(u8::is_ascii_digit)
+                && b.iter().all(|c| c.is_ascii_digit() || *c == b'V'))
+    };
+    let power = upper.starts_with("VCC")
+        || upper.starts_with("VDD")
+        || upper == "VBUS"
+        || upper == "VBAT"
+        || upper == "VIN"
+        || volty(&upper);
+    if power {
+        return "Power".into();
+    }
+    kind.to_string()
+}
+
 pub(crate) fn convert_schematic(sch: &mut Schematic, ws_root: &Path) -> SchematicDoc {
     // Fill in any missing reference designators so the UI and agent can talk
     // about `R1` instead of raw paths. Existing/hinted refdes are preserved.
@@ -78,7 +119,7 @@ pub(crate) fn convert_schematic(sch: &mut Schematic, ws_root: &Path) -> Schemati
             name.clone(),
             NetDoc {
                 name: name.clone(),
-                kind: net.kind.clone(),
+                kind: infer_rail_kind(name, &net.kind),
                 ports,
             },
         );

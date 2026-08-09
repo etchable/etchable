@@ -18,6 +18,7 @@ mod project;
 mod route;
 mod scaffold;
 mod symbol_geom;
+mod text_metrics;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 pub use circuit_json::{to_circuit_json, CircuitJsonDoc};
-pub use layout_check::{check_layout, LayoutProblem, LayoutReport};
+pub use layout_check::{
+    check_layout, find_empty_space, LayoutProblem, LayoutReport, SpaceDirection,
+};
 pub use model::*;
 pub use catalog::{
     list_library, resolve_library_path, symbol_pins, FootprintLibraryInfo, GenericInfo,

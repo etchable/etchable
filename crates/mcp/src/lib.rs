@@ -153,7 +153,8 @@ mod tests {
         assert!(names.contains(&"fetch_datasheet"));
         assert!(names.contains(&"zener_reference"));
         assert!(names.contains(&"set_positions"));
-        assert_eq!(names.len(), 18);
+        assert!(names.contains(&"find_empty_space"));
+        assert_eq!(names.len(), 19);
 
         // Every tool carries MCP annotations so clients can tell
         // inspection from mutation.
@@ -239,6 +240,30 @@ mod tests {
         assert!(written.contains("-38.1"), "{written}");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn find_empty_space_returns_a_center() {
+        let state = fixture_state();
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "find_empty_space",
+            &serde_json::json!({"width": 2.0, "height": 1.0, "direction": "right"}),
+        )
+        .await;
+        assert!(!is_error, "{text}");
+        let detail: Value = serde_json::from_str(&text).unwrap();
+        assert!(detail["center"]["x"].is_number());
+        assert!(detail["center"]["y"].is_number());
+
+        // Anchored to a refdes, on the left.
+        let (text, is_error) = tools::call_tool(
+            &state,
+            "find_empty_space",
+            &serde_json::json!({"width": 1.0, "height": 1.0, "anchor": "R1", "direction": "left"}),
+        )
+        .await;
+        assert!(!is_error, "{text}");
     }
 
     #[tokio::test]
