@@ -12,9 +12,9 @@ use zen_build::BuildSummary;
 /// meaningful with `build: true`).
 pub struct BuildRequest {
     /// Re-run workspace discovery + dependency resolution first
-    /// (needed when pcb.toml changed).
+    /// (needed when etchable.toml changed).
     pub reload: bool,
-    /// Re-read etch.toml + component cards and emit `project-changed`.
+    /// Re-read etchable.toml + component cards and emit `project-changed`.
     pub reload_project: bool,
     /// Run the zen build (false = project-only refresh, no build events).
     pub build: bool,

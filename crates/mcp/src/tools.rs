@@ -287,7 +287,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_bom",
-            description: "The BOM view: resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC, Basic/Extended class) for component instances, composed from etch.toml overrides, component cards, and inline attributes — with per-field provenance and an lcsc_classes summary (every Extended part adds a JLC setup fee). Requires an open etchable project. Not a vendor catalog lookup — that is get_part.",
+            description: "The BOM view: resolved part selections (MPN, manufacturer, vendor part numbers e.g. LCSC, Basic/Extended class) for component instances, composed from etchable.toml overrides, component cards, and inline attributes — with per-field provenance and an lcsc_classes summary (every Extended part adds a JLC setup fee). Requires an open etchable project. Not a vendor catalog lookup — that is get_part.",
             input_schema: json!({
                 "type": "object",
                 "properties": {

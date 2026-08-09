@@ -214,15 +214,30 @@ pub async fn select_board(
     open_board_file(&app, &registry, path, None).await
 }
 
-/// Open an etchable project directory (the primary flow): requires
-/// `etch.toml`, resolves the board entry, loads part data.
+/// Open an etchable project (the primary flow): requires `etchable.toml`,
+/// resolves the board entry, loads part data. Accepts either the project
+/// directory or the `etchable.toml` file itself (what the file picker
+/// selects).
 #[tauri::command]
 pub async fn open_project(
     app: AppHandle,
     registry: State<'_, Registry>,
     path: String,
 ) -> CmdResult<BuildSummary> {
-    let dir = PathBuf::from(path);
+    let mut dir = PathBuf::from(path);
+    if dir.is_file() {
+        if dir.file_name().is_none_or(|f| f != zen_build::ETCH_MANIFEST) {
+            return Err(format!(
+                "not an etchable project manifest (expected {}): {}",
+                zen_build::ETCH_MANIFEST,
+                dir.display()
+            ));
+        }
+        let Some(parent) = dir.parent() else {
+            return Err(format!("manifest has no parent directory: {}", dir.display()));
+        };
+        dir = parent.to_path_buf();
+    }
     if !dir.is_dir() {
         return Err(format!("not a directory: {}", dir.display()));
     }
@@ -493,7 +508,7 @@ pub async fn rebuild(
     state.request_build_and_wait().await
 }
 
-/// Reload dependencies too (pcb.toml edits outside the watcher's view).
+/// Reload the workspace too (manifest edits outside the watcher's view).
 #[tauri::command]
 pub async fn reload_workspace(
     registry: State<'_, Registry>,

@@ -85,8 +85,12 @@ const ThreadRoot: FC = () => {
           horizontally — wide content (code blocks, tool output) scrolls
           inside its own container. An auto x-scrollbar here makes the whole
           thread jitter whenever something transiently overflows. */}
+      {/* turnAnchor "bottom" = classic stick-to-bottom. The template's
+          "top" anchoring (pin the user message to the top, blank space
+          below for the streaming answer) reads as "it scrolled to the
+          top" against this panel's work-log turns. */}
       <ThreadPrimitive.Viewport
-        turnAnchor="top"
+        turnAnchor="bottom"
         data-slot="aui_thread-viewport"
         className="scroll-minimal relative flex flex-1 flex-col overflow-x-hidden overflow-y-scroll scroll-smooth"
       >

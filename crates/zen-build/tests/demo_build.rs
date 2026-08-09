@@ -17,7 +17,9 @@ fn builds_demo_board() {
     let board = repo_root.join("examples/demo/board.zen");
 
     let ws = Workspace::open(&board, false).expect("workspace opens");
-    assert!(ws.root().join("pcb.toml").exists());
+    // No pcb.toml (decision 0007): discovery falls back to the board's own
+    // directory, which must be the project root.
+    assert!(ws.root().join("etchable.toml").exists());
 
     let out = ws
         .build_file(&board, &BTreeMap::new())

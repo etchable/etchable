@@ -23,13 +23,14 @@ fn scaffold_round_trips_and_builds() {
     let parent = tmpdir("scaffold");
     let root = scaffold_project(&parent, "blinky").expect("scaffold");
 
-    for file in ["etch.toml", "pcb.toml", "board.zen", ".gitignore"] {
+    for file in ["etchable.toml", "board.zen", ".gitignore"] {
         assert!(root.join(file).is_file(), "missing {file}");
     }
     for dir in ["components", "datasheets", "layout"] {
         assert!(root.join(dir).is_dir(), "missing {dir}/");
     }
 
+    assert!(!root.join("pcb.toml").exists(), "projects carry no pcb.toml");
     let doc = load_project(&root).expect("loads");
     assert_eq!(doc.name, "blinky");
     assert_eq!(doc.board.as_deref(), Some("board.zen"));
@@ -70,11 +71,11 @@ fn scaffold_round_trips_and_builds() {
 fn non_projects_and_tolerant_parsing() {
     let dir = tmpdir("tolerant");
 
-    // No etch.toml => not a project.
+    // No etchable.toml => not a project.
     assert!(load_project(&dir).is_err());
 
-    // Malformed etch.toml still loads, with problems.
-    fs::write(dir.join("etch.toml"), "version = 1\nnot even = = toml").unwrap();
+    // Malformed etchable.toml still loads, with problems.
+    fs::write(dir.join("etchable.toml"), "[project]\nversion = \"0.1\"\nnot even = = toml").unwrap();
     fs::write(dir.join("board.zen"), "").unwrap();
     let doc = load_project(&dir).expect("loads despite parse error");
     assert!(doc.problems.iter().any(|p| p.contains("parse error")));
@@ -82,8 +83,8 @@ fn non_projects_and_tolerant_parsing() {
     // Unknown keys + wrong version warn but don't fail; entry falls back to
     // the single root .zen; name falls back to the directory name.
     fs::write(
-        dir.join("etch.toml"),
-        "version = 99\nfuture_key = true\n[parts.\"A.B\"]\nmpn = \"X\"\n",
+        dir.join("etchable.toml"),
+        "[project]\nversion = \"99\"\nfuture_key = true\n\n[top_key]\nx = 1\n\n[parts.\"A.B\"]\nmpn = \"X\"\n",
     )
     .unwrap();
     let doc = load_project(&dir).expect("loads");
@@ -91,10 +92,11 @@ fn non_projects_and_tolerant_parsing() {
     assert!(doc.name.starts_with("etch-project-tolerant"));
     assert!(doc.problems.iter().any(|p| p.contains("version 99")));
     assert!(doc.problems.iter().any(|p| p.contains("future_key")));
+    assert!(doc.problems.iter().any(|p| p.contains("top_key")));
     assert_eq!(doc.part_overrides.len(), 1);
     assert!(doc.part_overrides.contains_key("A.B"));
 
-    // Ambiguous entry: two root .zen files and no [board] path.
+    // Ambiguous entry: two root .zen files and no [project] board.
     fs::write(dir.join("second.zen"), "").unwrap();
     let doc = load_project(&dir).expect("loads");
     assert_eq!(doc.board, None);
@@ -103,19 +105,21 @@ fn non_projects_and_tolerant_parsing() {
         .iter()
         .any(|p| p.contains("2 .zen files at the project root")));
 
-    // pcb.toml [board] path wins over ambiguity; missing target is a problem.
+    // [project] name + board win over the fallbacks; a missing board target
+    // is a problem.
     fs::write(
-        dir.join("pcb.toml"),
-        "[workspace]\nname = \"named\"\npcb-version = \"0.4\"\n\n[board]\nname = \"b\"\npath = \"board.zen\"\n",
+        dir.join("etchable.toml"),
+        "[project]\nversion = \"0.1\"\nname = \"named\"\nboard = \"board.zen\"\n",
     )
     .unwrap();
     let doc = load_project(&dir).expect("loads");
     assert_eq!(doc.name, "named");
     assert_eq!(doc.board.as_deref(), Some("board.zen"));
+    assert!(doc.problems.is_empty(), "problems: {:?}", doc.problems);
 
     fs::write(
-        dir.join("pcb.toml"),
-        "[workspace]\nname = \"named\"\npcb-version = \"0.4\"\n\n[board]\nname = \"b\"\npath = \"missing.zen\"\n",
+        dir.join("etchable.toml"),
+        "[project]\nversion = \"0.1\"\nname = \"named\"\nboard = \"missing.zen\"\n",
     )
     .unwrap();
     let doc = load_project(&dir).expect("loads");
@@ -128,7 +132,7 @@ fn non_projects_and_tolerant_parsing() {
 #[test]
 fn cards_validate_lcsc_and_preserve_unknown_vendors() {
     let dir = tmpdir("cards");
-    fs::write(dir.join("etch.toml"), "version = 1\n").unwrap();
+    fs::write(dir.join("etchable.toml"), "[project]\nversion = \"0.1\"\n").unwrap();
     fs::write(dir.join("board.zen"), "").unwrap();
     fs::create_dir_all(dir.join("components")).unwrap();
     fs::create_dir_all(dir.join("datasheets")).unwrap();
@@ -251,9 +255,11 @@ fn synthetic_schematic() -> zen_build::SchematicDoc {
 fn part_resolution_precedence_and_targeting() {
     let dir = tmpdir("resolve");
     fs::write(
-        dir.join("etch.toml"),
+        dir.join("etchable.toml"),
         r#"
-version = 1
+[project]
+version = "0.1"
+
 [parts."REG.U"]
 mpn = "OVERRIDE-MPN"
 [parts."REG.U".vendors.lcsc]
@@ -316,8 +322,8 @@ mpn = "X"
 
     // Key normalization: an explicit root. prefix hits the same instance.
     fs::write(
-        dir.join("etch.toml"),
-        "version = 1\n[parts.\"root.REG.U\"]\nmpn = \"VIA-ROOT\"\n",
+        dir.join("etchable.toml"),
+        "[project]\nversion = \"0.1\"\n\n[parts.\"root.REG.U\"]\nmpn = \"VIA-ROOT\"\n",
     )
     .unwrap();
     let doc = load_project(&dir).expect("loads");

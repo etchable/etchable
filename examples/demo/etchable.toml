@@ -1,5 +1,9 @@
-# etch.toml marks this directory as an etchable project.
-version = 1
+# etchable.toml marks this directory as an etchable project.
+
+[project]
+version = "0.1"
+name = "demo"
+board = "board.zen"
 
 # Board-level part overrides compose on top of component cards and inline
 # attributes. Keys are instance paths without the `root.` prefix.

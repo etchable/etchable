@@ -1,0 +1,6 @@
+# etchable.toml marks this directory as an etchable project.
+
+[project]
+version = "0.1"
+name = "parts"
+board = "board.zen"

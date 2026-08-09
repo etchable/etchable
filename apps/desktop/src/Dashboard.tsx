@@ -54,7 +54,14 @@ export default function Dashboard() {
 
   const pickProject = async () => {
     try {
-      const picked = await open({ multiple: false, directory: true });
+      // A project is identified by its etchable.toml — pick that file
+      // (dialogs can only filter by extension, so the backend validates
+      // the name). open_project also accepts a directory for pasted paths.
+      const picked = await open({
+        multiple: false,
+        title: "Open a project (etchable.toml)",
+        filters: [{ name: "etchable project", extensions: ["toml"] }],
+      });
       if (typeof picked === "string") void run("open_project", { path: picked });
     } catch (err) {
       console.error("open dialog failed", err);

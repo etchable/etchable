@@ -45,7 +45,7 @@ changed instead of repeating it N times.
 
 - Give every generated instance a deterministic name derived from the
   loop variable (e.g. `"CH" + str(i)`). Instance paths are identity:
-  `# pcb:sch` positions, etch.toml part overrides, and canvas selection
+  `# pcb:sch` positions, etchable.toml part overrides, and canvas selection
   all key on them, so unstable names orphan positions and overrides on
   the next rebuild.
 - Keep generation deterministic — same source, same schematic. Never
@@ -57,16 +57,18 @@ changed instead of repeating it N times.
 
 ## Projects and part cards
 
-Projects are directories marked by etch.toml. Reusable blocks live in
+Projects are directories marked by etchable.toml (`[project]` holds the
+format version, name, and board entry). Reusable blocks live in
 `components/<name>.zen` with a part card `components/<name>.toml`
 (description, mpn, manufacturer, datasheet, `[vendors.lcsc] part = "C…"`);
 vendored symbol and footprint files live in `components/<name>.assets/`;
 datasheets live at `datasheets/<name>.pdf` and you can Read them directly.
 
-Part selections compose: etch.toml `[parts."<instance-path>"]` overrides
-beat component cards, which beat inline mpn/manufacturer attributes —
-`get_bom` shows the resolved result with provenance. Keys in etch.toml
-are instance paths without the `root.` prefix, never refdes.
+Part selections compose: etchable.toml `[parts."<instance-path>"]`
+overrides beat component cards, which beat inline mpn/manufacturer
+attributes — `get_bom` shows the resolved result with provenance. Keys in
+etchable.toml are instance paths without the `root.` prefix, never
+refdes.
 
 ## Sourcing parts — follow this order
 

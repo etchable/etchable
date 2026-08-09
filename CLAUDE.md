@@ -90,17 +90,24 @@ the trajectory).
   instead of closing and returns when the last project window closes;
   closing it as the last visible window exits.
   `capabilities/default.json` windows are `["dashboard", "app-*"]`.
-- Project format (docs/decisions/0002): a project dir is marked by
-  `etch.toml`; `pcb.toml` stays byte-compatible with upstream
-  (deny_unknown_fields — NEVER add custom keys to it) and owns name +
-  `[board]` entry. Part selection: etch.toml `[parts."<path>"]` overrides >
+- Project format (docs/decisions/0002, amended by 0007): ONE manifest,
+  `etchable.toml` (format version "0.1"): `[project]` owns version, name,
+  and the board entry (entry falls back to the single root .zen, name to
+  the dir name); `[parts."<path>"]` owns board-level part overrides.
+  Projects carry NO pcb.toml — upstream discovery falls back to the
+  board's directory and etchable declares no deps, so nothing needs it
+  (the vendored stdlib keeps its own pcb.toml: that one is upstream's and
+  load-bearing). The picker selects the etchable.toml file itself
+  (dialogs filter by extension only; `open_project` validates the name
+  and also accepts a directory). Part selection: overrides >
   `components/<name>.toml` cards > inline attrs, with the part-target rule
   (module-addressed selections land on the unique component descendant).
   File keys are root-stripped paths (like `# pcb:sch`); APIs emit
-  `root.`-prefixed. etch.toml/card parsing is TOLERANT (problems, never
-  failures). `zen_build::project` is the only implementation; watcher
-  routes `*.toml`/datasheet changes to a project-only refresh
-  (`project-changed` event, no build flash).
+  `root.`-prefixed. etchable.toml/card parsing is TOLERANT (problems,
+  never failures). `zen_build::project` is the only implementation;
+  watcher routes etchable.toml to workspace-reopen + project refresh
+  (the entry can change) and other `*.toml`/datasheet changes to a
+  project-only refresh (`project-changed` event, no build flash).
 - Agent scaffolding harness (docs/decisions/0003, amended by 0004 and
   0006): the MCP surface is 18 tools; sourcing never needs Bash. Tool
   names are vendor-neutral; vendor-specific arguments are keyed by vendor

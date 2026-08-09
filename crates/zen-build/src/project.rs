@@ -1,12 +1,14 @@
-//! The etchable project format (docs/decisions/0002).
+//! The etchable project format (docs/decisions/0002, amended by 0007).
 //!
-//! A project is a directory marked by `etch.toml`. Upstream's `pcb.toml`
-//! (closed to extension — `deny_unknown_fields`) keeps owning the facts it
-//! already models: workspace name and the board entry. `etch.toml` and the
-//! per-component part cards own everything etchable-specific, chiefly part
-//! selection. Parsing here is deliberately tolerant — unknown keys warn,
-//! never fail — the inverse of pcb.toml's strictness, because the GUI-first
-//! move on a broken project is to open it and let the user or agent fix it.
+//! A project is a directory marked by ONE manifest, `etchable.toml`:
+//! `[project]` holds the format version, name, and (optionally) the board
+//! entry; `[parts]` holds board-level part-selection overrides. There is no
+//! `pcb.toml` — upstream workspace discovery falls back to the board's
+//! directory when none exists, and etchable projects declare no
+//! dependencies, so it had nothing left to say (the vendored stdlib keeps
+//! its own pcb.toml; that is upstream's file). Parsing here is deliberately
+//! tolerant — unknown keys warn, never fail — because the GUI-first move on
+//! a broken project is to open it and let the user or agent fix it.
 //!
 //! Vocabulary: files persist ROOT-STRIPPED instance paths (`SENSE_DIV.R1`),
 //! matching `# pcb:sch` blocks; all APIs emit full `root.`-prefixed paths.
@@ -20,8 +22,8 @@ use serde_json::Value as JsonValue;
 
 use crate::model::{InstanceKind, SchematicDoc, ROOT_PATH};
 
-pub const ETCH_MANIFEST: &str = "etch.toml";
-pub const ETCH_FORMAT_VERSION: i64 = 1;
+pub const ETCH_MANIFEST: &str = "etchable.toml";
+pub const ETCH_FORMAT_VERSION: &str = "0.1";
 
 /// A vendor selection. Known vendors get validated schemas; unknown vendors
 /// are preserved raw and surfaced as problems — never dropped.
@@ -116,7 +118,7 @@ pub struct ResolvedPart {
 // ---------------------------------------------------------------------------
 
 /// Load a project directory. `Err` ONLY when `dir` isn't an etchable project
-/// (no `etch.toml`) or is unreadable; every other issue lands in `problems`.
+/// (no `etchable.toml`) or is unreadable; every other issue lands in `problems`.
 pub fn load_project(dir: &Path) -> Result<ProjectDoc> {
     let root = dir
         .canonicalize()
@@ -128,28 +130,22 @@ pub fn load_project(dir: &Path) -> Result<ProjectDoc> {
 
     let mut problems = Vec::new();
 
-    // --- etch.toml (tolerant) ----------------------------------------------
+    // --- etchable.toml (tolerant) ------------------------------------------
     let mut part_overrides = BTreeMap::new();
+    let mut name = None;
+    let mut board = None;
     match std::fs::read_to_string(&manifest) {
         Err(e) => problems.push(format!("{ETCH_MANIFEST}: unreadable: {e}")),
         Ok(text) => match text.parse::<toml::Table>() {
             Err(e) => problems.push(format!("{ETCH_MANIFEST}: parse error: {e}")),
-            Ok(table) => parse_etch_manifest(&table, &mut part_overrides, &mut problems),
+            Ok(table) => parse_etch_manifest(
+                &table,
+                &mut name,
+                &mut board,
+                &mut part_overrides,
+                &mut problems,
+            ),
         },
-    }
-
-    // --- pcb.toml (upstream strictness; failure is a problem, not an Err) --
-    let mut name = None;
-    let mut board = None;
-    let pcb_manifest = root.join("pcb.toml");
-    if pcb_manifest.is_file() {
-        match pcb_zen_core::PcbToml::from_path(&pcb_manifest) {
-            Err(e) => problems.push(format!("pcb.toml: {e:#}")),
-            Ok(pcb) => {
-                name = pcb.workspace.as_ref().and_then(|w| w.name.clone());
-                board = pcb.board.as_ref().and_then(|b| b.path.clone());
-            }
-        }
     }
 
     // Entry fallback: the single .zen at the project root.
@@ -166,19 +162,20 @@ pub fn load_project(dir: &Path) -> Result<ProjectDoc> {
         zens.sort();
         match zens.len() {
             1 => board = Some(zens.remove(0)),
-            0 => problems.push(
+            0 => problems.push(format!(
                 "cannot determine the board entry: no .zen file at the project root — \
-                 set [board] path in pcb.toml"
-                    .to_string(),
-            ),
+                 set `board` under [project] in {ETCH_MANIFEST}"
+            )),
             n => problems.push(format!(
                 "cannot determine the board entry: {n} .zen files at the project root — \
-                 set [board] path in pcb.toml"
+                 set `board` under [project] in {ETCH_MANIFEST}"
             )),
         }
     } else if let Some(b) = &board {
         if !root.join(b).is_file() {
-            problems.push(format!("pcb.toml: [board] path {b} does not exist"));
+            problems.push(format!(
+                "{ETCH_MANIFEST}: [project] board {b} does not exist"
+            ));
             board = None;
         }
     }
@@ -226,19 +223,50 @@ pub fn load_project(dir: &Path) -> Result<ProjectDoc> {
 
 fn parse_etch_manifest(
     table: &toml::Table,
+    name: &mut Option<String>,
+    board: &mut Option<String>,
     part_overrides: &mut BTreeMap<String, PartFields>,
     problems: &mut Vec<String>,
 ) {
     for (key, value) in table {
         match key.as_str() {
-            "version" => {
-                let v = value.as_integer();
-                if v != Some(ETCH_FORMAT_VERSION) {
-                    problems.push(format!(
-                        "{ETCH_MANIFEST}: version {} (this build understands {ETCH_FORMAT_VERSION}); \
-                         reading best-effort",
-                        value
-                    ));
+            "project" => {
+                let Some(project) = value.as_table() else {
+                    problems.push(format!("{ETCH_MANIFEST}: [project] must be a table"));
+                    continue;
+                };
+                for (pkey, pval) in project {
+                    match pkey.as_str() {
+                        "version" => {
+                            // Tolerate a bare number, but the canonical form
+                            // is a string ("0.1").
+                            let v = pval
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| pval.to_string());
+                            if v != ETCH_FORMAT_VERSION {
+                                problems.push(format!(
+                                    "{ETCH_MANIFEST}: [project] version {v} (this build \
+                                     understands {ETCH_FORMAT_VERSION}); reading best-effort"
+                                ));
+                            }
+                        }
+                        "name" => match pval.as_str() {
+                            Some(s) => *name = Some(s.to_string()),
+                            None => problems.push(format!(
+                                "{ETCH_MANIFEST}: [project] name must be a string"
+                            )),
+                        },
+                        "board" => match pval.as_str() {
+                            Some(s) => *board = Some(s.to_string()),
+                            None => problems.push(format!(
+                                "{ETCH_MANIFEST}: [project] board must be a string path"
+                            )),
+                        },
+                        other => problems.push(format!(
+                            "{ETCH_MANIFEST}: [project] unknown key `{other}` (ignored)"
+                        )),
+                    }
                 }
             }
             "parts" => {
@@ -294,7 +322,7 @@ fn load_card(root: &Path, name: &str, path: &Path, problems: &mut Vec<String>) -
             Ok(mut table) => {
                 // `[provenance]` / `[assets]` are card-only tables; split
                 // them off before the shared field parser (which treats
-                // unknown keys as problems and also serves etch.toml
+                // unknown keys as problems and also serves etchable.toml
                 // overrides, where these tables have no meaning).
                 if let Some(prov) = table.remove("provenance") {
                     match prov.as_table() {
@@ -533,18 +561,18 @@ pub fn resolve_parts(
         }
     }
 
-    // Layer 1 (highest): etch.toml instance overrides.
+    // Layer 1 (highest): etchable.toml instance overrides.
     for (key, fields) in &project.part_overrides {
         let full = format!("{ROOT_PATH}.{key}");
         if !sch.instances.contains_key(&full) {
             problems.push(format!(
-                "etch.toml: parts.\"{key}\" does not match any instance"
+                "{ETCH_MANIFEST}: parts.\"{key}\" does not match any instance"
             ));
             continue;
         }
         match component_target(sch, &full) {
             Ok(target) => apply_fields(entry(&mut out, &target), fields, "override"),
-            Err(why) => problems.push(format!("etch.toml: parts.\"{key}\": {why}")),
+            Err(why) => problems.push(format!("{ETCH_MANIFEST}: parts.\"{key}\": {why}")),
         }
     }
 
@@ -635,15 +663,11 @@ pub fn scaffold_project_detailed(parent: &Path, name: &str) -> Result<ScaffoldRe
         root.join(ETCH_MANIFEST),
         format!(
             "# {name} — an etchable project. This file marks the project root;\n\
-             # part selections and overrides live here (see docs).\n\
-             version = {ETCH_FORMAT_VERSION}\n"
-        ),
-    )?;
-    std::fs::write(
-        root.join("pcb.toml"),
-        format!(
-            "[workspace]\nname = \"{name}\"\npcb-version = \"0.4\"\n\n\
-             [board]\nname = \"{name}\"\npath = \"board.zen\"\n"
+             # part selections and overrides live here (see docs).\n\n\
+             [project]\n\
+             version = \"{ETCH_FORMAT_VERSION}\"\n\
+             name = \"{name}\"\n\
+             board = \"board.zen\"\n"
         ),
     )?;
     std::fs::write(

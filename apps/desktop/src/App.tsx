@@ -23,7 +23,13 @@ export default function App() {
 
   const pickProject = async () => {
     try {
-      const picked = await open({ multiple: false, directory: true });
+      // Projects are identified by etchable.toml; pick the manifest file
+      // (extension-only filtering — the backend validates the name).
+      const picked = await open({
+        multiple: false,
+        title: "Open a project (etchable.toml)",
+        filters: [{ name: "etchable project", extensions: ["toml"] }],
+      });
       if (typeof picked === "string") void app.openProject(picked);
     } catch (err) {
       console.error("open dialog failed", err);
@@ -47,17 +53,13 @@ export default function App() {
       <span className="mr-0.5 font-display text-sm font-extrabold tracking-tight">
         etchable
       </span>
-      {/* Same register as the Shell's sidebar collapsers: a bare icon
-          button, not a labeled action. */}
-      <button
-        type="button"
-        className="shell-collapser"
-        aria-label="Open the dashboard"
-        title="Dashboard"
-        onClick={showDashboard}
-      >
-        <IconSquaresFour size={16} />
-      </button>
+      {/* A labeled action, deliberately NOT in the sidebar-collapser
+          register: a bare icon here read as chrome toggling, but this
+          navigates to the dashboard window. */}
+      <Button variant="ghost" size="sm" onClick={showDashboard}>
+        <IconSquaresFour size={13} />
+        Dashboard
+      </Button>
       {app.project ? (
         <span
           className="max-w-[38vw] truncate rounded-full bg-ink/5 px-2.5 py-[3px] font-mono text-[10.5px] text-ink/55"

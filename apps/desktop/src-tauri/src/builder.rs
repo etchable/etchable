@@ -65,7 +65,7 @@ pub fn spawn_builder(
             };
 
             // Project refresh runs first (and alone when `build` is false):
-            // re-read etch.toml + cards, retarget the source if pcb.toml
+            // re-read etchable.toml + cards, retarget the source if it
             // renamed the entry, emit project-changed. No build events fire
             // for project-only refreshes — the canvas doesn't flash.
             if reload_project {
@@ -188,7 +188,7 @@ async fn refresh_project(app: &AppHandle, state: &SharedAppState) {
     };
     let view = match loaded {
         Ok(Ok(doc)) => {
-            // If pcb.toml renamed the entry and the canvas was on the old
+            // If the manifest renamed the entry and the canvas was on the old
             // one, follow the manifest.
             if let Some(new_board) = &doc.board {
                 let new_abs = doc.root.join(new_board);
@@ -255,7 +255,7 @@ fn finish_with_failure(app: &AppHandle, state: &SharedAppState, reply: Reply, ms
     }
 }
 
-/// Watch the workspace root for `*.zen` / `pcb.toml` changes; debounce and
+/// Watch the workspace root for `*.zen` / manifest changes; debounce and
 /// enqueue rebuilds. Replaces any previous watcher.
 pub fn start_watcher(state: &SharedAppState, root: &Path) -> anyhow::Result<()> {
     use notify::{RecursiveMode, Watcher};
@@ -296,9 +296,10 @@ pub fn start_watcher(state: &SharedAppState, root: &Path) -> anyhow::Result<()> 
 struct Relevance {
     /// `*.zen` — rebuild.
     sources: bool,
-    /// `pcb.toml` — reopen the workspace (deps/entry may have changed).
+    /// `etchable.toml` — reopen the workspace (the board entry may have
+    /// changed) and re-read the project.
     manifest: bool,
-    /// `etch.toml`, component cards, datasheets — re-read the project.
+    /// Component cards, datasheets, other toml — re-read the project.
     project: bool,
 }
 
@@ -317,7 +318,7 @@ impl Relevance {
         }
         Some(BuildRequest {
             reload: self.manifest,
-            // pcb.toml also carries the project's name/entry.
+            // etchable.toml also carries the project's name/entry.
             reload_project: self.project || self.manifest,
             build: self.sources || self.manifest,
             reply: None,
@@ -342,13 +343,13 @@ fn classify(event: &notify::Result<notify::Event>) -> Relevance {
         let in_datasheets = path
             .components()
             .any(|c| c.as_os_str().to_str() == Some("datasheets"));
-        if path.file_name().is_some_and(|f| f == "pcb.toml") {
+        if path.file_name().is_some_and(|f| f == "etchable.toml") {
             relevance.manifest = true;
         } else if path.extension().is_some_and(|e| e == "zen") {
             relevance.sources = true;
         } else if path.extension().is_some_and(|e| e == "toml") || in_datasheets {
-            // etch.toml, component cards, or datasheet presence (cards
-            // default their datasheet path from the file's existence).
+            // Component cards, or datasheet presence (cards default their
+            // datasheet path from the file's existence).
             relevance.project = true;
         }
     }
@@ -390,11 +391,11 @@ mod tests {
             Relevance { sources: true, ..Default::default() }
         );
         assert_eq!(
-            classify(&event(&["/p/pcb.toml"])),
+            classify(&event(&["/p/etchable.toml"])),
             Relevance { manifest: true, ..Default::default() }
         );
         assert_eq!(
-            classify(&event(&["/p/etch.toml"])),
+            classify(&event(&["/p/parts.toml"])),
             Relevance { project: true, ..Default::default() }
         );
         assert_eq!(
@@ -418,13 +419,13 @@ mod tests {
         assert!(req.build && req.reload_project && !req.reload);
 
         // Manifest changes imply project reload + workspace reload + build.
-        let req = classify(&event(&["/p/pcb.toml"]))
+        let req = classify(&event(&["/p/etchable.toml"]))
             .into_request()
             .expect("relevant");
         assert!(req.build && req.reload && req.reload_project);
 
         // Project-only: no build.
-        let req = classify(&event(&["/p/etch.toml"]))
+        let req = classify(&event(&["/p/components/card.toml"]))
             .into_request()
             .expect("relevant");
         assert!(!req.build && req.reload_project && !req.reload);

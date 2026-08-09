@@ -64,15 +64,15 @@ referenced with `file:` specs.
 
 ## The project format
 
-A project is a directory marked by `etch.toml` (see
+A project is a directory marked by `etchable.toml` (see
 [decisions/0002](decisions/0002-etchable-project-format.md) for rationale):
-`pcb.toml` owns the workspace name and `[board]` entry (upstream's schema,
-closed to extension), `etch.toml` owns etchable-specific data, reusable
+`etchable.toml` is the single manifest: `[project]` owns the format
+version, name, and board entry; `[parts]` owns overrides. Reusable
 blocks live in `components/<name>.zen` with an optional part card
 `components/<name>.toml` (description, mpn, manufacturer, datasheet,
 `[vendors.lcsc] part = "C…"`), and datasheets live at
 `datasheets/<name>.pdf`. Part selection resolves per component instance:
-`etch.toml [parts."<path>"]` overrides beat cards beat inline attributes,
+`etchable.toml [parts."<path>"]` overrides beat cards beat inline attributes,
 with the part-target rule mapping module-addressed selections onto their
 unique component descendant. `zen_build::project` implements
 load/resolve/scaffold; the app's `open_project`/`create_project` commands
