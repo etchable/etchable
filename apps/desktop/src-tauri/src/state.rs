@@ -132,6 +132,22 @@ impl Registry {
         self.instances.lock().expect("registry lock").is_empty()
     }
 
+    /// Every board currently open, for the window-session record. Sorted so the
+    /// stored value doesn't churn on HashMap iteration order.
+    pub fn open_boards(&self) -> Vec<String> {
+        let mut boards: Vec<String> = self
+            .instances
+            .lock()
+            .expect("registry lock")
+            .values()
+            .filter_map(|s| s.canvas.read(|c| c.source.clone()))
+            .map(|p| p.display().to_string())
+            .collect();
+        boards.sort();
+        boards.dedup();
+        boards
+    }
+
     /// An instance already showing this board file, if any (dedup on open).
     pub fn find_by_source(&self, source: &std::path::Path) -> Option<SharedAppState> {
         self.instances

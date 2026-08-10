@@ -104,6 +104,45 @@ async fn create_instance(app: &AppHandle, registry: &Registry) -> Result<SharedA
 /// Undo `create_instance`: abort the MCP server, kill the agent, drop the
 /// watcher and builder (their channels close with the state). Called when a
 /// project window is destroyed, and when an open flow fails half-way.
+/// Record which boards are open, so a later launch can reopen them.
+pub fn record_open_boards(registry: &Registry) {
+    write_open_boards(registry, registry.open_boards());
+}
+
+/// Drop one board from the restore set — the user closed that window.
+///
+/// This is deliberately driven by CloseRequested rather than Destroyed. Windows
+/// are also destroyed while the app quits, and the ordering is not something to
+/// rely on: on at least one exit path every window was destroyed BEFORE
+/// ExitRequested fired, so a Destroyed-driven update emptied the set and the
+/// next launch had nothing to reopen. CloseRequested is the event that means
+/// "the user is done with this", which is exactly the distinction the restore
+/// set needs.
+pub fn forget_open_board(registry: &Registry, label: &str) {
+    let closing = registry
+        .get(label)
+        .and_then(|s| s.canvas.read(|c| c.source.clone()))
+        .map(|p| p.display().to_string());
+    let Some(closing) = closing else { return };
+    let boards: Vec<String> = registry
+        .open_boards()
+        .into_iter()
+        .filter(|b| b != &closing)
+        .collect();
+    write_open_boards(registry, boards);
+}
+
+fn write_open_boards(registry: &Registry, boards: Vec<String>) {
+    let Some(store) = registry.store().cloned() else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = store.set_open_boards(&boards).await {
+            tracing::warn!("recording open boards failed: {e:#}");
+        }
+    });
+}
+
 pub fn teardown_instance(registry: &Registry, label: &str) {
     let Some(state) = registry.remove(label) else {
         return;
@@ -150,6 +189,7 @@ pub async fn open_board_file(
 
     if let Some(existing) = registry.find_by_source(&entry) {
         show_project_window(app, &existing.window_label);
+        record_open_boards(registry);
         // Re-opening doubles as a refresh.
         return existing.request_build_and_wait().await;
     }
@@ -185,6 +225,7 @@ pub async fn open_board_file(
         return Err(e);
     }
     show_project_window(app, &label);
+    record_open_boards(registry);
     Ok(summary)
 }
 

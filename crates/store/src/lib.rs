@@ -75,6 +75,10 @@ pub struct NewSession {
     pub resumed_from: Option<String>,
 }
 
+/// Pref keys for the window session (see `boards_to_restore`).
+const OPEN_BOARDS: &str = "session.open_boards";
+const CLEAN_EXIT: &str = "session.clean_exit";
+
 #[derive(Clone)]
 pub struct Store {
     conn: DatabaseConnection,
@@ -317,6 +321,42 @@ impl Store {
             .collect())
     }
 
+    // ---- window session ----------------------------------------------------
+    //
+    // Which projects were open, and whether the app got to say goodbye. Stored
+    // as prefs rather than their own table: two scalars that are rewritten
+    // wholesale, with no history worth keeping.
+
+    /// Record the boards currently open, so the next launch can reopen them.
+    pub async fn set_open_boards(&self, boards: &[String]) -> Result<()> {
+        self.set_pref(OPEN_BOARDS, &serde_json::json!(boards)).await
+    }
+
+    /// Mark whether the app exited on purpose. Set false while running so a
+    /// crash — which never gets to run any shutdown code — is indistinguishable
+    /// from "still running", and both mean "do not restore".
+    pub async fn set_clean_exit(&self, clean: bool) -> Result<()> {
+        self.set_pref(CLEAN_EXIT, &serde_json::json!(clean)).await
+    }
+
+    /// The boards to reopen: the recorded set, but only after a clean exit.
+    /// An empty result means "show the dashboard".
+    pub async fn boards_to_restore(&self) -> Result<Vec<String>> {
+        let prefs = self.get_prefs().await?;
+        if prefs.get(CLEAN_EXIT).and_then(|v| v.as_bool()) != Some(true) {
+            return Ok(Vec::new());
+        }
+        Ok(prefs
+            .get(OPEN_BOARDS)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     pub async fn set_pref(&self, key: &str, value: &serde_json::Value) -> Result<()> {
         pref::Entity::insert(pref::ActiveModel {
             key: Set(key.to_string()),
@@ -336,6 +376,43 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The restore contract, which is really a crash-detection contract: the
+    /// recorded boards only count when the app said goodbye.
+    #[tokio::test]
+    async fn boards_restore_only_after_a_clean_exit() {
+        let (_dir, store) = fresh().await;
+
+        // Nothing recorded yet: a first launch shows the dashboard.
+        assert!(store.boards_to_restore().await.unwrap().is_empty());
+
+        let boards = vec!["/p/a/board.zen".to_string(), "/p/b/board.zen".to_string()];
+        store.set_open_boards(&boards).await.unwrap();
+
+        // Recorded but no goodbye — i.e. what a crash leaves behind. The boards
+        // are still on disk, and are deliberately NOT restored.
+        store.set_clean_exit(false).await.unwrap();
+        assert!(
+            store.boards_to_restore().await.unwrap().is_empty(),
+            "a crash must not restore"
+        );
+
+        // A clean quit restores exactly what was open.
+        store.set_clean_exit(true).await.unwrap();
+        assert_eq!(store.boards_to_restore().await.unwrap(), boards);
+
+        // Closing every project before quitting means the dashboard, not a
+        // restore of nothing.
+        store.set_open_boards(&[]).await.unwrap();
+        assert!(store.boards_to_restore().await.unwrap().is_empty());
+
+        // Launching clears the flag, so a crash later in this run cannot be
+        // mistaken for the previous clean exit.
+        store.set_open_boards(&boards).await.unwrap();
+        store.set_clean_exit(true).await.unwrap();
+        store.set_clean_exit(false).await.unwrap();
+        assert!(store.boards_to_restore().await.unwrap().is_empty());
+    }
 
     async fn fresh() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();

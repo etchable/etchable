@@ -41,6 +41,11 @@ pub fn run() {
                         app.exit(0);
                     }
                 }
+                tauri::WindowEvent::CloseRequested { .. } if window.label() != "dashboard" => {
+                    // The user is done with this project: drop it from the set
+                    // that gets reopened next launch.
+                    commands::forget_open_board(&registry, window.label());
+                }
                 tauri::WindowEvent::Destroyed if window.label() != "dashboard" => {
                     commands::teardown_instance(&registry, window.label());
                     // Last project window gone: come back to the dashboard
@@ -93,6 +98,61 @@ pub fn run() {
             let runtime_dir = store::paths::runtime_dir();
             sweep_stale_runtime_files(&runtime_dir);
             let _ = registry.config_dir.set(runtime_dir);
+
+            // Reopen what was open. A clean quit recorded its boards; a crash
+            // never got to, so this comes back empty and the dashboard stands.
+            // The flag is cleared immediately: from here until the next
+            // ExitRequested, dying at any point means "do not restore".
+            let restore = registry
+                .store()
+                .map(|store| {
+                    let store = store.clone();
+                    tauri::async_runtime::block_on(async move {
+                        let boards = store.boards_to_restore().await.unwrap_or_default();
+                        let _ = store.set_clean_exit(false).await;
+                        boards
+                    })
+                })
+                .unwrap_or_default();
+            if !restore.is_empty() {
+                // Hide it now, not once the first project window appears: the
+                // dashboard is created visible by the window config, and the
+                // restore below is async, so otherwise it flashes first.
+                if let Some(dash) = app.get_webview_window("dashboard") {
+                    let _ = dash.hide();
+                }
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut opened = 0usize;
+                    for board in restore {
+                        let path = std::path::PathBuf::from(&board);
+                        // A board that moved or was deleted is simply dropped —
+                        // never a startup error, and never a reason to show
+                        // nothing at all.
+                        if !path.is_file() {
+                            tracing::info!("not restoring {board}: no longer there");
+                            continue;
+                        }
+                        let project = zen_build::load_project(
+                            path.parent().unwrap_or(&path),
+                        )
+                        .ok();
+                        let registry = handle.state::<Registry>();
+                        match commands::open_board_file(&handle, &registry, path, project).await {
+                            Ok(_) => opened += 1,
+                            Err(e) => tracing::warn!("restoring {board} failed: {e}"),
+                        }
+                    }
+                    // Everything we meant to reopen is gone or broken: leave the
+                    // user somewhere useful rather than with a hidden dashboard.
+                    if opened == 0 {
+                        if let Some(dash) = handle.get_webview_window("dashboard") {
+                            let _ = dash.show();
+                            let _ = dash.set_focus();
+                        }
+                    }
+                });
+            }
 
             // Dev nicety: ETCHABLE_OPEN=<board.zen or project dir> opens at
             // startup (relative to the invocation cwd).
@@ -178,11 +238,22 @@ pub fn run() {
 
     app.run(|app, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
-            // Quit in progress: window teardown must not resurrect the
-            // dashboard from its Destroyed handler.
-            app.state::<Registry>()
+            let registry = app.state::<Registry>();
+            registry
                 .exiting
                 .store(true, std::sync::atomic::Ordering::Relaxed);
+            // The restore set is already whatever the user left open — it is
+            // maintained on open and on CloseRequested, never derived here,
+            // because windows may already be gone by the time this fires.
+            // Stamping the flag is all that's needed, and it is what separates a
+            // quit from a crash: a process that dies never runs this line.
+            if let Some(store) = registry.store().cloned() {
+                tauri::async_runtime::block_on(async move {
+                    if let Err(e) = store.set_clean_exit(true).await {
+                        tracing::warn!("recording clean exit failed: {e:#}");
+                    }
+                });
+            }
         }
     });
 }
