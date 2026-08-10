@@ -15,7 +15,10 @@
     "gen:text-metrics": "node tools/gen-text-metrics.mjs",
     "gen:text-metrics:check": "node tools/gen-text-metrics.mjs --check",
     "gen:store-types": "node tools/gen-store-types.mjs",
-    "gen:store-types:check": "node tools/gen-store-types.mjs --check"
+    "gen:store-types:check": "node tools/gen-store-types.mjs --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:gestures": "node tools/gesture-check.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.11",
@@ -53,6 +56,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "4.1.10"
   }
 }

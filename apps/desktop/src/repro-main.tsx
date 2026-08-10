@@ -5,6 +5,8 @@ import { Shell } from "@etchable/ui";
 import Chat from "./chat/Chat";
 import type { ChatItem } from "./chat/messages";
 import CircuitCanvas from "./circuit/CircuitCanvas";
+import ErrorBoundary, { GlobalErrorNotice } from "./ErrorBoundary";
+import { centersFromView, movesFromEdit } from "./circuit/moves";
 import type { BuildView } from "./types";
 import demoCircuit from "./repro-fixtures/demo-circuit.json";
 import "./App.css";
@@ -244,14 +246,44 @@ function CanvasRepro() {
           .filter((p) => p.startsWith("root."))
           .map((p) => [p, { editable: true }]),
       ),
-      nets: {},
+      // Nets are editable too — net-level gestures (rename, delete a wire)
+      // check this map, so an empty one silently disables them in the harness.
+      nets: Object.fromEntries(
+        [...new Set(Object.values(doc.id_map))]
+          .filter((t) => !t.startsWith("root."))
+          .map((net) => [net, { editable: true }]),
+      ),
     }),
     [doc],
   );
+  // Enough of a schematic for net-level gestures: deleting a wire needs the
+  // net's ports to know which pins to detach. Derived from the fixture's own
+  // traces so it always matches what's drawn.
+  const fixtureSchematic = React.useMemo(() => {
+    const nets: Record<string, import("./types").NetDoc> = {};
+    for (const el of doc.elements) {
+      const e = el as Record<string, unknown>;
+      if (e.type !== "schematic_trace") continue;
+      const id = e.schematic_trace_id;
+      const net = typeof id === "string" ? doc.id_map[id] : undefined;
+      if (!net) continue;
+      // Two ends per trace in the demo fixture; the ports are the pins the
+      // route joined, which the fixture doesn't carry, so name them by net.
+      nets[net] = {
+        name: net,
+        kind: "Net",
+        ports: [
+          { component: "root.R_LIMIT.R", pin: "2" },
+          { component: "root.D_STATUS.LED", pin: "A" },
+        ],
+      };
+    }
+    return { root_module: "top", instances: {}, nets, by_refdes: {} };
+  }, [doc]);
   const view: BuildView = {
     version: 4,
     source: fixtureUrl ?? "examples/demo/board.zen",
-    schematic: null,
+    schematic: fixtureSchematic,
     diagnostics: [],
     circuit_json: doc.elements,
     id_map: doc.id_map,
@@ -259,6 +291,52 @@ function CanvasRepro() {
     editability: fixtureEditability,
   };
   const [selection, setSelection] = React.useState<string[]>([]);
+  // Harness seam. Headless Chrome's SVG hit-testing does not reliably deliver
+  // synthetic mouse events to the viewer's symbols (its camera group carries a
+  // mirrored transform), so pixel-driving a drag is unreliable. Expose the
+  // real edit-path functions plus a record of what got written, and drive
+  // those instead — same code the app runs on a live drop.
+  const reproRef = React.useRef<{ saves: unknown[]; calls: string[] }>({
+    saves: [],
+    calls: [],
+  });
+  React.useEffect(() => {
+    const api = {
+      record: reproRef.current,
+      centersFromView: () => centersFromView(view),
+      /** Simulate a drop of `path` at an arbitrary (possibly off-grid) center. */
+      drop: (path: string, x: number, y: number) =>
+        movesFromEdit({
+          draggedPath: path,
+          newCenter: { x, y },
+          centers: centersFromView(view),
+          selection,
+        }),
+      select: (paths: string[]) => setSelection(paths),
+      selection: () => selection,
+      /**
+       * Mimic a rebuild landing: a brand-new circuit_json array (new identity,
+       * as the build payload always is) with every component shifted by `dx`.
+       * `dx: 0` is the no-op rebuild a save with unchanged geometry produces.
+       * Used to hunt the visible flash on edit.
+       */
+      bump: (dx: number) => {
+        setDoc((cur) => ({
+          id_map: cur.id_map,
+          elements: cur.elements.map((el) => {
+            const e = el as Record<string, unknown>;
+            if (e.type !== "schematic_component") return { ...e };
+            const c = e.center as { x: number; y: number };
+            return { ...e, center: { x: c.x + dx, y: c.y } };
+          }) as BuildView["circuit_json"],
+        }));
+      },
+      /** Send a real keydown to the window, for the keyboard gestures. */
+      key: (key: string, mods: Partial<KeyboardEventInit> = {}) =>
+        window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...mods })),
+    };
+    (window as unknown as { __repro: typeof api }).__repro = api;
+  }, [view, selection]);
   // ?state=canvas&place=1 arms a fake resistor placement (ghost + drop
   // form); &label=1 arms the GND label tool — console.log commits, no
   // Tauri backend in the repro page.
@@ -287,7 +365,10 @@ function CanvasRepro() {
       diagnostics={[]}
       selection={selection}
       onSelectionChange={setSelection}
-      onSavePositions={(p) => console.log("savePositions", p)}
+      onSavePositions={(p) => {
+        reproRef.current.saves.push(p);
+        console.log("savePositions", JSON.stringify(p));
+      }}
       placement={placement}
       onPlacementCommit={async (name, attrs, pos) => {
         console.log("addInstance", name, attrs, pos);
@@ -306,6 +387,9 @@ function CanvasRepro() {
       }}
       onRenameInstance={async (from, to) => {
         console.log("renameInstance", from, to);
+      }}
+      onDisconnectPin={async (path, pin) => {
+        console.log("disconnectPin", path, pin);
       }}
       onRemoveInstances={async (paths) => {
         console.log("removeInstances", paths);
@@ -412,8 +496,58 @@ const SOURCING: ChatItem[] = (() => {
   return items;
 })();
 
+// ?state=crash throws during render, to prove the boundary catches instead of
+// blanking the window.
+function Boom(): React.ReactElement {
+  throw new Error("deliberate render failure (repro ?state=crash)");
+}
+
+// ?state=async throws outside render (a rejected promise, a timeout) — the
+// failures an error boundary structurally cannot see.
+function AsyncBoom() {
+  return (
+    <div style={{ padding: 24, fontFamily: "monospace", fontSize: 12 }}>
+      <GlobalErrorNotice />
+      <button type="button" onClick={() => void Promise.reject(new Error("rejected in a handler"))}>
+        reject a promise
+      </button>{" "}
+      <button
+        type="button"
+        onClick={() =>
+          setTimeout(() => {
+            throw new Error("thrown in a timeout");
+          }, 0)
+        }
+      >
+        throw in a timeout
+      </button>{" "}
+      <button
+        type="button"
+        onClick={() => {
+          // Noise that must NOT raise a notice.
+          window.dispatchEvent(
+            new ErrorEvent("error", { message: "ResizeObserver loop completed" }),
+          );
+        }}
+      >
+        emit ignored noise
+      </button>
+    </div>
+  );
+}
+
 function Repro() {
   const state = new URLSearchParams(location.search).get("state");
+  if (state === "async") {
+    return <AsyncBoom />;
+  }
+  if (state === "crash") {
+    return (
+      <ErrorBoundary what="The canvas">
+        <Boom />
+      </ErrorBoundary>
+    );
+  }
   if (state === "canvas") {
     return (
       <div style={{ position: "fixed", inset: 0, display: "flex" }}>

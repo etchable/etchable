@@ -16,6 +16,14 @@ the trajectory).
 ## Commands
 
 - `cargo test --workspace` — all Rust tests (fast; pcb deps are cached)
+- `pnpm --filter @etchable/desktop test` — vitest over the frontend's pure
+  logic (currently the move/snap arithmetic every drag gesture funnels through)
+- `pnpm --filter @etchable/desktop test:gestures` — canvas gesture regressions
+  against a driven browser; needs a repro server on 5199
+  (`pnpm --filter @etchable/desktop exec vite --port 5199 --host 127.0.0.1`)
+  plus the `agent-browser` CLI, so it is deliberately NOT in CI. Run it after
+  touching the viewer patch or anything in `src/circuit/` — drag tracking,
+  click targeting, and mode cursors only break against the real renderer
 - `cargo run -p zen-build -- examples/demo/board.zen --pretty` — eval a board,
   dump schematic JSON (the M0 CLI; great for inspecting pipeline output)
 - `pnpm --filter @etchable/desktop build` — typecheck (tsc strict) + bundle
