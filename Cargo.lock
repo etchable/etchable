@@ -20,7 +20,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-host"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-proto",
  "anyhow",
@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "agent-proto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2036,7 +2036,7 @@ dependencies = [
 
 [[package]]
 name = "etchable"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "agent-host",
  "agent-proto",
@@ -4016,7 +4016,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lcsc"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "flate2",
@@ -4319,7 +4319,7 @@ dependencies = [
 
 [[package]]
 name = "mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -6974,7 +6974,7 @@ dependencies = [
 
 [[package]]
 name = "store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -9105,7 +9105,7 @@ dependencies = [
 
 [[package]]
 name = "zen-build"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
