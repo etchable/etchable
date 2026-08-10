@@ -229,7 +229,7 @@ const MCP_ACTIVITY: Record<string, string> = {
   add_component: "Installing a component…",
   get_symbol_pins: "Reading symbol pins…",
   fetch_datasheet: "Fetching a datasheet…",
-  zener_reference: "Reading the Zener guide…",
+  zener_reference: "Reading the language guide…",
 };
 
 function fileBasename(input: unknown): string | null {

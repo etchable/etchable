@@ -120,14 +120,18 @@ cargo run -p zen-build -- examples/demo/board.zen --summary   # {ok, components,
 - **M2 canvas** — done, rebuilt on tscircuit (PATCH-001): `zen-build` emits
   Circuit JSON + `id_map`, `@tscircuit/schematic-viewer` renders real symbol
   glyphs, net-label flags, module boxes; selection + diagnostic highlighting
-  ride per-id CSS. Dropped vs the old canvas: marquee multi-select and
-  module-container click targets (see docs/decisions/0001).
+  ride per-id CSS. Marquee multi-select came back with the editing work
+  (plain drag on empty canvas); module-container boxes are click-through by
+  design, so a press lands on the part inside (see docs/decisions/0001).
 - **M3 embedded agent** — done: chat panel, tool activity, inline permissions,
-  MCP server with all seven tools.
+  MCP server (27 tools; the surface grew with sourcing and the edit verbs).
 - **M4 selection as context** — done: selection → `set_selection` →
   `get_selection` MCP tool + structured `<canvas-selection>` block in prompts.
-- **M5 polish** — not started (real symbol shapes, module collapse,
-  multi-board, session branching, layout handoff).
+- **M5 polish** — partly done: real symbol glyphs and the humanized layout
+  (single-component module collapse, rail idioms — decision 0008) landed with
+  the canvas-editing work, as did direct manipulation (decision 0009) and
+  LCSC/JLCPCB sourcing. Still open: multi-board, session branching, layout
+  handoff.
 
 ## Known limits / risks
 
@@ -136,8 +140,11 @@ cargo run -p zen-build -- examples/demo/board.zen --summary   # {ok, components,
   deliberately.
 - Bundled-app distribution needs `lib/std` shipped next to the binary and
   Anthropic auth arrangements for non-personal use; dev-mode use is fine.
-- Nets render as net-label flags at each pin (standard schematic idiom), not
-  routed wires; `schematic_trace` routing is a possible follow-up.
+- Local signal nets (2..=4 ports, small span) render as routed `schematic_trace`
+  wires; power/ground and far-flung nets keep net-label flags at each pin — the
+  standard schematic idiom, and exactly the nets that would otherwise become
+  spaghetti. There is no obstacle avoidance: exit stubs keep wires out of symbol
+  bodies and the layout pass keeps connected parts adjacent (see route.rs).
 - The tscircuit npm stack churns fast and has undeclared inter-package deps;
   versions are pinned exact and must move as a set
   (docs/decisions/0001-circuit-json-renderer.md).

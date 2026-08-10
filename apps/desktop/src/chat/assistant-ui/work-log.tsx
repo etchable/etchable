@@ -130,8 +130,11 @@ const MCP_DISPLAY: Record<
   },
   zener_reference: {
     icon: FileText,
-    heading: "Read the Zener guide",
-    active: "Reading the Zener guide",
+    // The key stays the tool's name; the label is what a user reads, and the
+    // language the board is written in is not something they should need to
+    // know about.
+    heading: "Read the language guide",
+    active: "Reading the language guide",
   },
 };
 
