@@ -1,3 +1,4 @@
+mod menu;
 mod agent;
 mod builder;
 mod commands;
@@ -23,6 +24,7 @@ pub fn run() {
         // Project windows are documents: closing one tears its instance down
         // (agent, builder, watcher, MCP server). The dashboard only hides —
         // unless it's the last visible window, which quits.
+        .on_menu_event(|app, event| menu::handle(app, event))
         .on_window_event(|window, event| {
             let app = window.app_handle();
             let registry = app.state::<Registry>();
@@ -78,6 +80,12 @@ pub fn run() {
                     None
                 }
             });
+
+            // Install a menu immediately, with no recents and no db access. The
+            // list is filled in by the deferred refresh at the end of setup:
+            // reading it here would put a db-touching task alongside setup's own
+            // blocking read, and the two contend badly enough to hang startup.
+            menu::install(&handle, &[]);
 
             // Packaged apps carry the stdlib in Resources/stdlib (see
             // bundle.resources); exe-ancestor discovery can never find
@@ -192,6 +200,9 @@ pub fn run() {
                     }
                 });
             }
+
+            // Now that setup's blocking reads are done, fill in Open Recent.
+            menu::refresh_soon(&app.handle().clone());
 
             Ok(())
         })

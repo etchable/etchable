@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button, IconX, Input, Shell, Spinner } from "@etchable/ui";
 import type { RecentProject } from "./types";
@@ -70,6 +71,7 @@ export default function Dashboard() {
   const [pastedPath, setPastedPath] = useState("");
   const [creating, setCreating] = useState(false);
   const [projectName, setProjectName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentProject[]>([]);
@@ -105,6 +107,23 @@ export default function Dashboard() {
       setBusy(false);
     }
   };
+
+  // Menu actions land here when the dashboard is the focused window. New
+  // Project has no dialog of its own — the name is typed here — so the menu
+  // opens the form and puts the cursor in it rather than inventing a prompt.
+  useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    const unlisten = win.listen<string>("menu-action", (e) => {
+      if (e.payload === "open-project") void pickProject();
+      if (e.payload === "new-project") {
+        setCreating(true);
+        requestAnimationFrame(() => nameRef.current?.focus());
+      }
+    });
+    return () => {
+      void unlisten.then((f) => f());
+    };
+  });
 
   const pickProject = async () => {
     try {
@@ -155,6 +174,7 @@ export default function Dashboard() {
   const createRow = (
     <div className="mt-4 flex items-center gap-2">
       <Input
+        ref={nameRef}
         inputSize="sm"
         type="text"
         placeholder="project name"

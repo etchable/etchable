@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ErrorBoundary from "./ErrorBoundary";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   Button,
   IconSquaresFour,
@@ -163,6 +164,45 @@ export default function App() {
       console.error("open dialog failed", err);
     }
   };
+
+  // The application menu emits its item id to the focused window; the actions
+  // themselves live here (and in the canvas), so the menu never grows a second
+  // implementation of anything.
+  useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    // Camera keys are already bound on the canvas, so the menu replays them
+    // rather than reaching into the viewer's camera a second way.
+    const canvasKey = (key: string) =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    const unlisten = win.listen<string>("menu-action", (e) => {
+      switch (e.payload) {
+        case "open-project":
+          void pickProject();
+          break;
+        case "rebuild":
+          if (source && !building) void app.rebuild();
+          break;
+        case "zoom-in":
+          canvasKey("+");
+          break;
+        case "zoom-out":
+          canvasKey("-");
+          break;
+        case "zoom-fit":
+          canvasKey("f");
+          break;
+        case "new-project":
+        case "show-dashboard":
+          showDashboard();
+          break;
+        default:
+          break;
+      }
+    });
+    return () => {
+      void unlisten.then((f) => f());
+    };
+  });
 
   const showDashboard = () => {
     void invoke("show_dashboard").catch((err) =>

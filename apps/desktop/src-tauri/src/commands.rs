@@ -226,6 +226,8 @@ pub async fn open_board_file(
     }
     show_project_window(app, &label);
     record_open_boards(registry);
+    // Recents just changed, and they live in the menu.
+    crate::menu::refresh(app).await;
     Ok(summary)
 }
 
