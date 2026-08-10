@@ -60,6 +60,23 @@ export default function InlinePrompt(props: InlinePromptProps) {
     });
   }, [screen.x, screen.y, wrapRef, error]);
 
+  // Esc closes the card wherever focus happens to be. It cannot rely on the
+  // input's own handler: the input is `disabled` while committing, which blurs
+  // it, so after a FAILED commit focus sits on the body and every keystroke
+  // missed the card — the prompt was unclosable except by succeeding.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Be the only handler: the canvas also listens on window and would
+      // clear the selection behind the closing card.
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
   const commit = async () => {
     const trimmed = value.trim();
     if (!trimmed || busy) return;
@@ -70,6 +87,12 @@ export default function InlinePrompt(props: InlinePromptProps) {
     } catch (err) {
       setBusy(false);
       setError(humanizeError(err));
+      // Re-enabling the input does not give focus back, so hand it back
+      // explicitly: the user's next move is to edit the value or bail out.
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
     }
   };
 

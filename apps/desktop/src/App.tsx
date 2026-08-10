@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import ErrorBoundary from "./ErrorBoundary";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -7,6 +8,7 @@ import {
   IconX,
   Shell,
   Spinner,
+  type ShellApi,
 } from "@etchable/ui";
 import CircuitCanvas from "./circuit/CircuitCanvas";
 import Palette from "./circuit/Palette";
@@ -55,6 +57,7 @@ export default function App() {
     setAttribute,
     renameInstance,
     removeInstances,
+    disconnectPin,
     display: appDisplay,
   } = app;
   // The LATEST build's hash — even when the display shows the last good
@@ -168,6 +171,27 @@ export default function App() {
   };
 
   const { counts, building, build, source } = app;
+  const shellApiRef = useRef<ShellApi | null>(null);
+  // A prompt waiting in the composer, never auto-sent. `seq` lets the same
+  // text be re-offered after the user clears it.
+  const [draft, setDraft] = useState<{ text: string; seq: number } | null>(null);
+  const draftSeq = useRef(0);
+  /** Hand the agent the failing build, with the panel open to see it. */
+  const askAgentToFix = useCallback(() => {
+    const errors = app.diagnostics.filter((d) => d.severity === "error");
+    if (errors.length === 0) return;
+    const lines = errors.slice(0, 10).map((d) => {
+      const where = d.file ? `${d.file}${d.line ? `:${d.line}` : ""}` : "";
+      return where ? `- ${where} — ${d.message}` : `- ${d.message}`;
+    });
+    const more = errors.length > lines.length ? `\n- …and ${errors.length - lines.length} more` : "";
+    draftSeq.current += 1;
+    setDraft({
+      text: `Fix ${errors.length === 1 ? "this build error" : "these build errors"}:\n\n${lines.join("\n")}${more}`,
+      seq: draftSeq.current,
+    });
+    shellApiRef.current?.openRight();
+  }, [app.diagnostics]);
   const hasBoard = build !== null || source !== null;
 
   const pill =
@@ -207,19 +231,26 @@ export default function App() {
           building…
         </span>
       ) : build && counts.errors > 0 ? (
-        <span className={`${pill} bg-alert/10 text-alert`}>
+        <button
+          type="button"
+          className={`${pill} cursor-pointer bg-alert/10 text-alert transition-colors hover:bg-alert/20`}
+          title="Ask Claude to fix — fills the chat with the errors, ready to send"
+          onClick={askAgentToFix}
+        >
           <IconX size={11} /> {counts.errors} error{counts.errors === 1 ? "" : "s"}
-        </span>
+        </button>
       ) : null}
     </div>
   );
 
   const panel = (
     <div className="flex h-full min-h-0 flex-col">
+      <ErrorBoundary what="The chat">
       <Chat
         transcript={app.transcript}
         agentRunning={app.agentRunning}
         selection={app.selection}
+        draft={draft}
         sessionInfo={app.sessionInfo}
         sessions={app.sessions}
         onSend={(t) => void app.sendMessage(t)}
@@ -229,6 +260,7 @@ export default function App() {
         onClearSelection={() => app.setSelection([])}
         onResumeSession={(id) => void app.resumeSession(id)}
       />
+      </ErrorBoundary>
     </div>
   );
 
@@ -237,6 +269,7 @@ export default function App() {
       macTrafficLights={macOverlayChrome}
       titlebar={titlebar}
       rightSidebar={hasBoard ? panel : undefined}
+      shellApiRef={shellApiRef}
       rightMinWidth={340}
       defaultRightWidth={Math.max(360, Math.round(window.innerWidth * 0.3))}
     >
@@ -259,6 +292,7 @@ export default function App() {
               armedLabel={labelMode}
               onArmLabel={armLabel}
             />
+            <ErrorBoundary what="The canvas">
             <CircuitCanvas
               view={app.display.view}
               source={source}
@@ -289,6 +323,9 @@ export default function App() {
               }}
               onSetAttribute={commitSetAttribute}
               onRenameInstance={commitRenameInstance}
+              onDisconnectPin={async (path, pin) => {
+                await disconnectPin(path, pin, baseHash ?? "");
+              }}
               onRemoveInstances={commitRemove}
               onAskAgent={(text) => void app.sendMessage(text)}
               latestHash={baseHash ?? null}
@@ -299,6 +336,7 @@ export default function App() {
                 )
               }
             />
+            </ErrorBoundary>
           </div>
         </>
       ) : (

@@ -7,6 +7,7 @@
 
 import { useEffect, useRef } from "react";
 import { observeCamera, readCamera } from "./camera";
+import { snap } from "./grid";
 import type { GhostGeometry, MoveIn } from "../types";
 
 export type Provisional = {
@@ -96,8 +97,10 @@ export default function ProvisionalLayer(props: ProvisionalLayerProps) {
       drag.moved = true;
       const dx = (e.clientX - drag.startX) / cam.a;
       const dy = (e.clientY - drag.startY) / cam.d;
-      const nx = drag.part.x + dx;
-      const ny = drag.part.y + dy;
+      // This layer owns its own element, so it can step across the grid while
+      // the drag is live rather than settling onto it at the drop.
+      const nx = snap(drag.part.x + dx);
+      const ny = snap(drag.part.y + dy);
       drag.el.dataset.x = String(nx);
       drag.el.dataset.y = String(ny);
       drag.el.style.transform = `translate(${cam.a * nx + cam.e}px, ${cam.d * ny + cam.f}px)`;

@@ -1,13 +1,17 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index bcf341385d9e2ef4b6a8c6496be9648fb8d540a0..e3c9714beac2ce19d1bcbda0628d0cd9012116c2 100644
+index bcf341385d9e2ef4b6a8c6496be9648fb8d540a0..05f6510a6bea76d02e6ee70a13e452ebf62e492f 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -31,6 +31,18 @@ interface Props$1 {
+@@ -31,6 +31,22 @@ interface Props$1 {
      }) => void;
      /** Called when the active schematic sheet changes (multi-sheet circuits). */
      onSchematicSheetChange?: (schematicSheetId: string) => void;
 +    /** PATCH(etchable): imperative camera controls for the host app. */
 +    cameraApiRef?: React.MutableRefObject<SchematicCameraApi | null>;
++    /** PATCH(etchable): decide which drags pan the camera. Receives the raw
++     * mouse/touch/wheel event; return false to suppress the built-in
++     * drag-pan. Must return true for WheelEvent to keep wheel zoom. */
++    shouldPanOnDrag?: (e: MouseEvent | TouchEvent | WheelEvent) => boolean;
 +    /** PATCH(etchable): hide the built-in edit/grid/menu icons. */
 +    hideChrome?: boolean;
 +}
@@ -22,7 +26,7 @@ index bcf341385d9e2ef4b6a8c6496be9648fb8d540a0..e3c9714beac2ce19d1bcbda0628d0cd9
  declare const SchematicViewer: ({ circuitJson, containerStyle, editEvents: unappliedEditEvents, onEditEvent, defaultEditMode, debugGrid, editingEnabled, debug, clickToInteractEnabled, colorOverrides, disableGroups, netHoverHighlightEnabled, onSchematicComponentClicked, showSchematicPorts, onSchematicPortClicked, onSchematicSheetChange, css, className, }: Props$1) => react.JSX.Element;
  
 diff --git a/dist/index.js b/dist/index.js
-index ac4954915a489ce21cc3d6d127f708aedf4f8215..7c0064b86e6f7c9f92cda106a5e0cdecd5ea3087 100644
+index ac4954915a489ce21cc3d6d127f708aedf4f8215..01c1e182aaabbddc4e912ca7f081ae389196a4f0 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -589,10 +589,12 @@ var enableDebug = () => {
@@ -39,16 +43,46 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..7c0064b86e6f7c9f92cda106a5e0cdec
    toString as transformToString
  } from "transformation-matrix";
  import { useMouseMatrixTransform } from "use-mouse-matrix-transform";
-@@ -1930,6 +1932,8 @@ var SchematicViewer = ({
+@@ -628,6 +630,11 @@ import { compose as compose2 } from "transformation-matrix";
+ var debug2 = debug_default.extend("useComponentDragging");
+ var useComponentDragging = ({
+   onEditEvent,
++  // PATCH(etchable): progress notifications go straight to the host. They must
++  // NOT go through the viewer's own handleEditEvent, which appends to
++  // internalEditEvents — one entry per mousemove would re-apply the move over
++  // and over and the symbol would run away from the cursor.
++  onDragProgress,
+   editEvents = [],
+   circuitJson,
+   cancelDrag,
+@@ -748,8 +755,15 @@ var useComponentDragging = ({
+       };
+       activeEditEventRef.current = newEditEvent;
+       setActiveEditEvent(newEditEvent);
++      // PATCH(etchable): tell the host DURING the drag, not only at the end.
++      // The viewer moves the dragged symbol itself, but a host that moves a
++      // whole SELECTION needs the live delta to preview the other members —
++      // without this they sit still and jump when the drop is saved.
++      // in_progress is already true on this event, so hosts that only care
++      // about committed moves can ignore it (see CircuitCanvas.handleEditEvent).
++      if (onDragProgress) onDragProgress(newEditEvent);
+     },
+-    [realToScreenProjection, snapToGrid]
++    [realToScreenProjection, snapToGrid, onDragProgress]
+   );
+   const handleMouseMove = useCallback(
+     (e) => updateDragPosition(e.clientX, e.clientY),
+@@ -1930,6 +1944,9 @@ var SchematicViewer = ({
    showSchematicPorts = false,
    onSchematicPortClicked,
    onSchematicSheetChange,
 +  cameraApiRef,
 +  hideChrome = false,
++  shouldPanOnDrag,
    css,
    className
  }) => {
-@@ -2081,6 +2085,7 @@ var SchematicViewer = ({
+@@ -2081,6 +2098,7 @@ var SchematicViewer = ({
    const {
      ref: containerRef,
      cancelDrag,
@@ -56,7 +90,22 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..7c0064b86e6f7c9f92cda106a5e0cdec
      transform: svgToScreenProjection
    } = useMouseMatrixTransform({
      onSetTransform(transform) {
-@@ -2132,6 +2137,58 @@ var SchematicViewer = ({
+@@ -2088,7 +2106,13 @@ var SchematicViewer = ({
+       svgDivRef.current.style.transform = transformToString(transform);
+     },
+     // @ts-ignore disabled is a valid prop but not typed
+-    enabled: isInteractionEnabled
++    enabled: isInteractionEnabled,
++    // PATCH(etchable): let the host decide which drags pan. The host wants
++    // plain left-drag for rubber-band selection (KiCad's model) and pan on
++    // middle-drag or space-drag. NOTE: the library also runs this predicate
++    // for wheel events, so a host predicate must return true for those or it
++    // silently kills zoom.
++    shouldDrag: shouldPanOnDrag
+   });
+   const { containerWidth, containerHeight } = useResizeHandling(containerRef);
+   const svgString = useMemo4(() => {
+@@ -2132,6 +2156,58 @@ var SchematicViewer = ({
        return identity();
      }
    }, [svgString]);
@@ -115,7 +164,16 @@ index ac4954915a489ce21cc3d6d127f708aedf4f8215..7c0064b86e6f7c9f92cda106a5e0cdec
    const handleEditEvent = (event) => {
      setInternalEditEvents((prev) => [...prev, event]);
      if (onEditEvent) {
-@@ -2276,21 +2333,21 @@ var SchematicViewer = ({
+@@ -2148,6 +2224,8 @@ var SchematicViewer = ({
+     activeEditEvent
+   } = useComponentDragging({
+     onEditEvent: handleEditEvent,
++    // PATCH(etchable): the raw host prop, bypassing internalEditEvents.
++    onDragProgress: onEditEvent,
+     cancelDrag,
+     realToSvgProjection,
+     svgToScreenProjection,
+@@ -2276,21 +2354,21 @@ var SchematicViewer = ({
                )
              }
            ),

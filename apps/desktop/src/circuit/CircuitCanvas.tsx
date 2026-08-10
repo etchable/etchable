@@ -12,10 +12,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
 import { SchematicViewer } from "@tscircuit/schematic-viewer";
-import { Button, IconCornersOut, IconMinus, IconPlus } from "@etchable/ui";
+import {
+  Button,
+  IconCornersOut,
+  IconCrosshair,
+  IconCursor,
+  IconHand,
+  IconMinus,
+  IconPlus,
+  IconTag,
+} from "@etchable/ui";
 import { observeCamera, readCamera } from "./camera";
 import { humanizeError, type FriendlyError } from "./errors";
 import GestureOverlay from "./GestureOverlay";
+import { SNAP, snap } from "./grid";
+import { centersFromView, movesFromEdit } from "./moves";
 import InlinePrompt from "./InlinePrompt";
 import PlacementLayer from "./PlacementLayer";
 import ProvisionalLayer, { type Provisional } from "./ProvisionalLayer";
@@ -34,6 +45,14 @@ type ViewerCircuitJson = ComponentProps<typeof SchematicViewer>["circuitJson"];
 type CameraApiRef = NonNullable<ComponentProps<typeof SchematicViewer>["cameraApiRef"]>;
 
 const ZOOM_STEP = 1.25;
+/** Arrow-key nudge directions in grid steps. Schematic space is y-up, so Up
+ * increases y. */
+const NUDGES: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, 1],
+  ArrowDown: [0, -1],
+};
 
 const ACCENT = "#4d9fff";
 const ERROR = "#d64545";
@@ -73,6 +92,8 @@ type CircuitCanvasProps = {
   onSetAttribute: (path: string, key: string, value: string) => Promise<void>;
   onRenameInstance: (from: string, to: string) => Promise<void>;
   onRemoveInstances: (paths: string[]) => Promise<void>;
+  /** Detach one pin from its net — how a selected wire or net label is deleted. */
+  onDisconnectPin: (path: string, pin: string) => Promise<void>;
   /** Refusal handoff: send a pre-filled message to the agent chat. */
   onAskAgent: (text: string) => void;
   /** The LATEST build's hash (current file), also when the board is red. */
@@ -106,10 +127,23 @@ function cssAttr(value: string): string {
 // without this bump.
 let editSeq = 0;
 const stamped = new WeakSet<object>();
+// The last drawing we stamped, by content. Rebuilds are frequent — every agent
+// edit, every watcher event, every save — and most of them don't move anything
+// on the canvas. The viewer regenerates and swaps its whole <svg> whenever this
+// key changes, which reads as a flash, so a build whose circuit_json is
+// byte-identical reuses the previous array and the viewer never notices.
+// (Deterministic emission is what makes the comparison sound: see
+// crates/zen-build/src/circuit_json.rs.)
+let lastDrawing: { json: string; elements: BuildView["circuit_json"] } | null = null;
 function withEditCount(elements: BuildView["circuit_json"]): ViewerCircuitJson {
   if (!stamped.has(elements)) {
+    const json = JSON.stringify(elements);
+    if (lastDrawing && lastDrawing.json === json) {
+      return lastDrawing.elements as unknown as ViewerCircuitJson;
+    }
     stamped.add(elements);
     (elements as unknown as { editCount: number }).editCount = ++editSeq;
+    lastDrawing = { json, elements };
   }
   // The wire payload is opaque JSON; the Rust emitter + the zod validation
   // harness own schema conformance, so this cast is the module boundary.
@@ -138,6 +172,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     onSetAttribute,
     onRenameInstance,
     onRemoveInstances,
+    onDisconnectPin,
     onAskAgent,
     latestHash,
     provisionals,
@@ -157,20 +192,136 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   viewRef.current = view;
   const onRemoveRef = useRef(onRemoveInstances);
   onRemoveRef.current = onRemoveInstances;
+  const onDisconnectRef = useRef(onDisconnectPin);
+  onDisconnectRef.current = onDisconnectPin;
   const onSaveRef = useRef(onSavePositions);
   onSaveRef.current = onSavePositions;
+
+  // Open confirmations, mirrored into refs for the []-dep key handler.
+  const mergeConfirmRef = useRef<unknown>(null);
+  const deleteConfirmRef = useRef<unknown>(null);
 
   // Delete needs a confirmation when it cascades (>3 instances).
   const [deleteConfirm, setDeleteConfirm] = useState<{
     paths: string[];
     busy: boolean;
   } | null>(null);
+  deleteConfirmRef.current = deleteConfirm;
 
-  /** The selection's deletable instance paths (nets filtered out). */
+  /** The component the pointer is over, from the overlay's hover tracking. */
+  const hoveredRef = useRef<string | null>(null);
+
+  /** `W` arms the wire tool: click a pin, click another. Stays armed for the
+   * next wire (KiCad keeps its tool active) until Escape. */
+  const [wireMode, setWireMode] = useState(false);
+  const wireModeRef = useRef(wireMode);
+  wireModeRef.current = wireMode;
+
+  /** The hand tool: a sticky pan mode, for when holding space is awkward. */
+  const [panMode, setPanMode] = useState(false);
+  const panModeRef = useRef(panMode);
+  panModeRef.current = panMode;
+
+  /** Space held = pan mode, so a left-drag pans instead of rubber-banding. */
+  const spaceHeldRef = useRef(false);
+  const [panCursor, setPanCursor] = useState(false);
+  useEffect(() => {
+    const set = (held: boolean) => {
+      if (spaceHeldRef.current === held) return;
+      spaceHeldRef.current = held;
+      setPanCursor(held);
+    };
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const el = document.activeElement;
+      if (
+        el instanceof HTMLElement &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault(); // space must not scroll or re-click a focused button
+      set(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.key === " ") set(false);
+    };
+    // Losing focus mid-hold would otherwise leave pan mode stuck on.
+    const clear = () => set(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
+
+  /**
+   * Which drags pan (patched into the viewer as `shouldPanOnDrag`): middle
+   * button, or left button with space held. Plain left-drag is left alone for
+   * marquee/move. Wheel events MUST pass — the underlying hook runs this same
+   * predicate for zoom, so returning false here would kill wheel zoom.
+   */
+  const shouldPanOnDrag = (e: MouseEvent | TouchEvent | WheelEvent) => {
+    if (typeof WheelEvent !== "undefined" && e instanceof WheelEvent) return true;
+    if (typeof MouseEvent !== "undefined" && e instanceof MouseEvent) {
+      const middle = e.button === 1 || (e.buttons & 4) !== 0;
+      return middle || spaceHeldRef.current || panModeRef.current;
+    }
+    return true; // touch panning is unchanged
+  };
+
+  /**
+   * What a keyboard verb acts on. KiCad acts on the item under the cursor when
+   * nothing is selected — that hover-first reflex is most of why its editing
+   * feels direct — so the selection wins when it exists and the hovered
+   * component stands in for it when it doesn't.
+   */
+  const actionTargets = () => {
+    if (selectionRef.current.length > 0) return selectionRef.current;
+    return hoveredRef.current ? [hoveredRef.current] : [];
+  };
+
+  /** Deletable instance paths among the action targets (nets filtered out). */
   const deletableSelection = () => {
     const v = viewRef.current;
     if (!v?.editability) return [];
-    return selectionRef.current.filter((p) => v.editability?.instances[p]);
+    return actionTargets().filter((p) => v.editability?.instances[p]);
+  };
+
+  /**
+   * Deleting a selected wire or net label means detaching pins — a net isn't a
+   * thing in the source, it's the connection between pins. Unambiguous only
+   * when the net joins exactly two pins (the wire you clicked IS that
+   * connection); past that, which end to drop is the user's call, so hand it to
+   * the agent rather than guess.
+   */
+  const deleteNets = (nets: string[]) => {
+    const v = viewRef.current;
+    const sch = v?.schematic;
+    if (!sch) return;
+    for (const net of nets) {
+      const ports = sch.nets?.[net]?.ports ?? [];
+      if (ports.length !== 2) {
+        showToastErrRef.current(
+          `${net} joins ${ports.length} pins — deleting it means choosing which to detach.`,
+          { intent: `Please disconnect ${net}` },
+        );
+        continue;
+      }
+      void Promise.all(
+        ports.map((p) => onDisconnectRef.current(p.component, p.pin)),
+      )
+        .then(() => {
+          onSelectRef.current([]);
+          showToastRef.current(
+            `Disconnected ${ports.map((p) => `${p.component.split(".").pop()}.${p.pin}`).join(" and ")} from ${net}.`,
+          );
+        })
+        .catch((err) => showToastErrRef.current(err));
+    }
   };
 
   const removeSelection = (paths: string[]) => {
@@ -199,9 +350,29 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       const id = el.schematic_component_id;
       const path = typeof id === "string" ? v.id_map[id] : undefined;
       const c = el.center as { x: number; y: number } | undefined;
-      if (path && c && selectionRef.current.includes(path)) {
+      if (path && c && actionTargets().includes(path)) {
         moves[path] = { x: c.x, y: c.y, rotate_by: 90 };
       }
+    }
+    if (Object.keys(moves).length > 0) onSaveRef.current(moves, hash);
+  };
+
+  /**
+   * Arrow-key nudge, one grid step per press. Snapped, so nudging something
+   * that came off a derived layout pulls it onto the grid on the first press
+   * instead of carrying an arbitrary offset around forever.
+   */
+  const nudgeSelection = (dx: number, dy: number) => {
+    const v = viewRef.current;
+    const hash = latestHashRef.current;
+    if (!v || !hash) return;
+    const targets = actionTargets();
+    if (targets.length === 0) return;
+    const centers = centersFromView(v);
+    const moves: Record<string, MoveIn> = {};
+    for (const path of targets) {
+      const c = centers.get(path);
+      if (c) moves[path] = { x: snap(c.x + dx), y: snap(c.y + dy) };
     }
     if (Object.keys(moves).length > 0) onSaveRef.current(moves, hash);
   };
@@ -226,8 +397,30 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     intent?: string;
   } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copiedToast, setCopiedToast] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Copy the toast's full text (detail, which carries the raw error). */
+  const copyToast = () => {
+    const t = toastRef.current;
+    if (!t) return;
+    const text = t.fe.detail ?? t.fe.message;
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedToast(true);
+        if (copiedTimer.current) clearTimeout(copiedTimer.current);
+        // Hold the toast open long enough to read the confirmation.
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast(null), 2500);
+        copiedTimer.current = setTimeout(() => setCopiedToast(false), 1500);
+      })
+      .catch(() => {});
+  };
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const armToast = (t: NonNullable<typeof toast>, ms: number) => {
     setToast(t);
+    setCopiedToast(false);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   };
@@ -256,6 +449,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     screen: { x: number; y: number };
     busy: boolean;
   } | null>(null);
+  mergeConfirmRef.current = mergeConfirm;
 
   const wireConnect = async (
     a: { path: string; pin: string },
@@ -322,19 +516,50 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     });
   }, [source]);
 
-  // Marquee select (phase 4): shift+drag on the canvas draws a rubber
-  // band and selects the components whose centers fall inside. The
-  // capture-phase mousedown keeps the viewer's pan from starting.
+  // Marquee select: plain left-drag on empty canvas draws a rubber band and
+  // selects the components whose centers fall inside — the KiCad (and Figma)
+  // model, where dragging nothing means "select an area" and panning has its
+  // own buttons (middle-drag, or space held). Shift makes it additive. The
+  // capture-phase mousedown keeps the viewer from acting on the same press.
   const marqueeRef = useRef<HTMLDivElement>(null);
+  const additiveRef = useRef(false);
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     let start: { x: number; y: number } | null = null;
+    // A pan is a camera gesture, not a selection one: remember that the press
+    // became a drag so the click it produces doesn't clear the selection.
+    let panFrom: { x: number; y: number } | null = null;
+    const panDown = (e: MouseEvent) => {
+      if (e.button === 1 || (e.button === 0 && spaceHeldRef.current)) {
+        panFrom = { x: e.clientX, y: e.clientY };
+      }
+    };
+    const panUp = (e: MouseEvent) => {
+      if (!panFrom) return;
+      const moved = Math.hypot(e.clientX - panFrom.x, e.clientY - panFrom.y) >= 4;
+      panFrom = null;
+      if (moved) clickHandledRef.current = true;
+    };
     const down = (e: MouseEvent) => {
-      if (!e.shiftKey || e.button !== 0) return;
-      if ((e.target as Element).closest?.(".pin-hit")) return; // shift-click select
+      if (e.button !== 0) return; // middle-drag pans
+      if (spaceHeldRef.current) return; // space-drag pans
+      if (panModeRef.current) return; // the hand tool owns the canvas
+      if (wireModeRef.current) return; // the wire tool owns the canvas
+      const target = e.target as Element;
+      if (target.closest?.(".pin-hit")) return; // a wire gesture starts here
+      // Pressing a symbol (or a net label) is that thing's own gesture: the
+      // viewer moves it, a click selects it. Only empty canvas rubber-bands —
+      // except with shift, which is explicitly "add an area to the selection".
+      if (
+        !e.shiftKey &&
+        target.closest?.("[data-schematic-component-id], [data-schematic-net-label-id]")
+      ) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
+      additiveRef.current = e.shiftKey;
       const rect = wrap.getBoundingClientRect();
       start = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     };
@@ -376,15 +601,25 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         const sy = cam.d * c.y + cam.f;
         if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) hit.push(path);
       }
-      if (hit.length > 0) onSelectRef.current(hit);
+      if (additiveRef.current) {
+        const merged = [...new Set([...selectionRef.current, ...hit])];
+        if (merged.length !== selectionRef.current.length) onSelectRef.current(merged);
+      } else {
+        // An empty band clears, the way clicking empty canvas does.
+        onSelectRef.current(hit);
+      }
     };
     wrap.addEventListener("mousedown", down, true);
+    wrap.addEventListener("mousedown", panDown);
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    window.addEventListener("mouseup", panUp);
     return () => {
       wrap.removeEventListener("mousedown", down, true);
+      wrap.removeEventListener("mousedown", panDown);
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("mouseup", panUp);
     };
   }, []);
 
@@ -432,6 +667,40 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       // While placing, the placement layer owns the keyboard (Esc cancels
       // placement in the capture phase; R rotates).
       if (placementRef.current) return;
+      // Any open confirmation takes Esc first — a card with no keyboard exit is
+      // a trap, especially when it appeared because something failed.
+      if (e.key === "Escape" && mergeConfirmRef.current) {
+        setMergeConfirm(null);
+        return;
+      }
+      if (e.key === "Escape" && deleteConfirmRef.current) {
+        setDeleteConfirm(null);
+        return;
+      }
+      // Esc disarms the wire tool before it touches the selection.
+      if (e.key === "Escape" && wireModeRef.current) {
+        setWireMode(false);
+        return;
+      }
+      if (e.key === "w" || e.key === "W") {
+        setPanMode(false);
+        setWireMode((on) => !on);
+        return;
+      }
+      if (e.key === "v" || e.key === "V") {
+        setWireMode(false);
+        setPanMode(false);
+        return;
+      }
+      if (e.key === "h" || e.key === "H") {
+        setWireMode(false);
+        setPanMode((on) => !on);
+        return;
+      }
+      if (e.key === "Escape" && panModeRef.current) {
+        setPanMode(false);
+        return;
+      }
       // Esc ends an armed label tool before it clears the selection.
       if (e.key === "Escape" && labelModeRef.current) {
         onLabelFinishRef.current();
@@ -441,18 +710,42 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         onSelectRef.current([]);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         const paths = deletableSelection();
+        // Wires and net labels select as NETS, which the instance-only filter
+        // above drops — that used to make Delete a silent no-op on them.
+        const v = viewRef.current;
+        const nets = actionTargets().filter((t) => v?.editability?.nets[t]);
+        if (nets.length > 0) {
+          e.preventDefault();
+          deleteNets(nets);
+        }
         if (paths.length === 0) return;
         e.preventDefault();
         if (paths.length > 3) setDeleteConfirm({ paths, busy: false });
         else removeSelection(paths);
-      } else if ((e.key === "r" || e.key === "R") && selectionRef.current.length > 0) {
+      } else if ((e.key === "r" || e.key === "R") && actionTargets().length > 0) {
         rotateSelection();
       } else if (e.key === "+" || e.key === "=") {
         cameraRef.current?.zoom(ZOOM_STEP);
       } else if (e.key === "-") {
         cameraRef.current?.zoom(1 / ZOOM_STEP);
-      } else if (e.key === "f" || e.key === "0") {
+      } else if (e.key === "f" || e.key === "0" || e.key === "Home") {
+        // Home is the KiCad reflex for zoom-to-fit; f/0 stay as they were.
         cameraRef.current?.fit();
+      } else if (e.key === "e" || e.key === "E") {
+        // Edit the one thing being acted on; ambiguous for a multi-selection.
+        const targets = actionTargets();
+        if (targets.length !== 1) return;
+        const at = screenPointOf(targets[0]);
+        if (!at) return;
+        e.preventDefault();
+        openEditFor(targets[0], at);
+      } else if (NUDGES[e.key]) {
+        // One grid step per press, on the selection or the hovered part.
+        const [dx, dy] = NUDGES[e.key];
+        if (actionTargets().length > 0) {
+          e.preventDefault();
+          nudgeSelection(dx * SNAP, dy * SNAP);
+        }
       }
     };
     window.addEventListener("keydown", down);
@@ -511,17 +804,17 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       const compId = reverse.componentIdByPath.get(target);
       if (compId) {
         rules.push(
-          `g[data-schematic-component-id="${cssAttr(compId)}"] { filter: drop-shadow(0 0 5px ${ACCENT}); }`,
+          `g[data-schematic-component-id="${cssAttr(compId)}"] { filter: drop-shadow(0 0 1px ${ACCENT}) drop-shadow(0 0 6px ${ACCENT}); }`,
         );
       }
       for (const labelId of reverse.labelIdsByNet.get(target) ?? []) {
         rules.push(
-          `[data-schematic-net-label-id="${cssAttr(labelId)}"] { filter: drop-shadow(0 0 5px ${ACCENT}); }`,
+          `[data-schematic-net-label-id="${cssAttr(labelId)}"] { filter: drop-shadow(0 0 1px ${ACCENT}) drop-shadow(0 0 6px ${ACCENT}); }`,
         );
       }
       for (const traceId of reverse.traceIdsByNet.get(target) ?? []) {
         rules.push(
-          `g[data-schematic-trace-id="${cssAttr(traceId)}"] { filter: drop-shadow(0 0 5px ${ACCENT}); }`,
+          `g[data-schematic-trace-id="${cssAttr(traceId)}"] { filter: drop-shadow(0 0 1px ${ACCENT}) drop-shadow(0 0 6px ${ACCENT}); }`,
         );
       }
     }
@@ -553,6 +846,50 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
   // Double-click: a net label renames the net (phase 2); a component edits
   // its value, or renames the instance when it has no value attr (phase
   // 4). Editability gates both with the honest reason.
+  /**
+   * Open the inline editor for a component: its value if it has one, else its
+   * name. Shared by double-click and the `E`/`V` keys — in KiCad those keys
+   * are the reflex for "edit this thing", and having both reach the same
+   * editor is what keeps the two habits from diverging.
+   */
+  const openEditFor = (path: string, screen: { x: number; y: number }) => {
+    const v = viewRef.current;
+    if (!v) return;
+    const edit = v.editability?.instances[path];
+    if (edit && !edit.editable && !edit.anchor) {
+      showToastErrRef.current(
+        edit.reason ?? `${path} is generated and can't be edited directly`,
+        { intent: `Please edit ${path} for me` },
+      );
+      return;
+    }
+    const value = v.schematic?.instances[path]?.attributes?.value;
+    if (value !== undefined) {
+      setPrompt({ kind: "value", path, current: String(value), screen });
+    } else {
+      const anchor = edit && !edit.editable ? edit.anchor : path;
+      const from = (anchor ?? path).split(".").pop();
+      if (!from) return;
+      setPrompt({ kind: "iname", from, screen });
+    }
+  };
+
+  /** Where a component currently sits on screen, for keyboard-opened editors
+   * that need an anchor the way a click gives one. */
+  const screenPointOf = (path: string): { x: number; y: number } | null => {
+    const v = viewRef.current;
+    const wrap = wrapRef.current;
+    if (!v || !wrap) return null;
+    const center = centersFromView(v).get(path);
+    const cam = readCamera(wrap);
+    if (!center || !cam) return null;
+    const rect = wrap.getBoundingClientRect();
+    return {
+      x: rect.left + cam.a * center.x + cam.e,
+      y: rect.top + cam.d * center.y + cam.f,
+    };
+  };
+
   const onContainerDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!view) return;
     const labelEl = (e.target as Element).closest?.("[data-schematic-net-label-id]");
@@ -573,27 +910,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     const compId = compEl?.getAttribute("data-schematic-component-id");
     const path = compId ? view.id_map[compId] : undefined;
     if (!path) return;
-    const edit = view.editability?.instances[path];
-    if (edit && !edit.editable && !edit.anchor) {
-      showToast(edit.reason ?? `${path} is generated and can't be edited directly`, {
-        intent: `Please edit ${path} for me`,
-      });
-      return;
-    }
-    const value = view.schematic?.instances[path]?.attributes?.value;
-    if (value !== undefined) {
-      setPrompt({
-        kind: "value",
-        path,
-        current: String(value),
-        screen: { x: e.clientX, y: e.clientY },
-      });
-    } else {
-      const anchor = edit && !edit.editable ? edit.anchor : path;
-      const from = (anchor ?? path).split(".").pop();
-      if (!from) return;
-      setPrompt({ kind: "iname", from, screen: { x: e.clientX, y: e.clientY } });
-    }
+    openEditFor(path, { x: e.clientX, y: e.clientY });
   };
 
   const selChipText = useMemo(() => {
@@ -684,31 +1001,22 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       return;
     }
     groupGhostsRef.current?.replaceChildren();
+    // A drag ends with a click, and the container's click handler treats a
+    // plain click as "clear the selection" — which threw away a multi-select
+    // the moment you let go of a group drag. Dragging is not a selection
+    // gesture, so swallow that click.
+    clickHandledRef.current = true;
     // The LATEST hash, not the displayed view's — a red board's display is
     // pinned to the last good build, whose hash would bounce the move.
     if (!view || !latestHash || !event.schematic_component_id || !event.new_center) return;
     const draggedPath = view.id_map[event.schematic_component_id];
     if (!draggedPath) return;
-    const centers = new Map<string, { x: number; y: number }>();
-    for (const el of view.circuit_json) {
-      if (el.type !== "schematic_component") continue;
-      const id = el.schematic_component_id;
-      const path = typeof id === "string" ? view.id_map[id] : undefined;
-      const center = el.center as { x: number; y: number } | undefined;
-      if (path && center) centers.set(path, center);
-    }
-    const moves: Record<string, MoveIn> = {};
-    const old = centers.get(draggedPath);
-    if (selectionRef.current.includes(draggedPath) && selectionRef.current.length > 1 && old) {
-      const dx = event.new_center.x - old.x;
-      const dy = event.new_center.y - old.y;
-      for (const path of selectionRef.current) {
-        const c = centers.get(path);
-        if (c) moves[path] = { x: c.x + dx, y: c.y + dy };
-      }
-    } else {
-      moves[draggedPath] = { x: event.new_center.x, y: event.new_center.y };
-    }
+    const moves = movesFromEdit({
+      draggedPath,
+      newCenter: event.new_center,
+      centers: centersFromView(view),
+      selection: selectionRef.current,
+    });
     if (Object.keys(moves).length > 0) {
       onSavePositions(moves, latestHash);
     }
@@ -718,8 +1026,36 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
     <div
       className={`dotgrid relative min-w-0 flex-1 overflow-hidden ${
         labelMode && !prompt ? "cursor-copy" : ""
+      } ${panCursor || panMode ? "pan-mode" : ""} ${wireMode ? "wire-mode" : ""} ${
+        !panCursor && !panMode && !wireMode && !labelMode && !placement ? "select-mode" : ""
       }`}
       ref={wrapRef}
+      tabIndex={-1}
+      onMouseDownCapture={(e) => {
+        // Clicking a plain <div> doesn't move focus, so the chat textarea keeps
+        // it and isTyping() silences W/V/H/R/Delete for the rest of the
+        // session. Hand focus to the canvas — unless the press is inside a
+        // field that legitimately wants it (the inline prompt).
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        const active = document.activeElement;
+        if (
+          active instanceof HTMLElement &&
+          (active.tagName === "INPUT" ||
+            active.tagName === "TEXTAREA" ||
+            active.isContentEditable)
+        ) {
+          active.blur();
+        }
+        wrapRef.current?.focus({ preventScroll: true });
+      }}
       onClick={onContainerClick}
       onDoubleClick={onContainerDoubleClick}
     >
@@ -728,6 +1064,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
           key={source ?? "no-board"}
           circuitJson={withEditCount(view.circuit_json)}
           editingEnabled
+          shouldPanOnDrag={shouldPanOnDrag}
           defaultEditMode
           hideChrome
           cameraApiRef={cameraRef}
@@ -757,7 +1094,6 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
               junction: "#c1783c",
             },
           }}
-          css={highlightCss}
           onSchematicComponentClicked={({ schematicComponentId, event }) => {
             clickHandledRef.current = true;
             const path = view.id_map[schematicComponentId];
@@ -813,6 +1149,11 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         <GestureOverlay
           view={view}
           wrapRef={wrapRef}
+          selection={selection}
+          wireArmed={wireMode}
+          onHoverComponent={(path) => {
+            hoveredRef.current = path;
+          }}
           onPortClick={applyClick}
           labelArmed={labelMode !== null && !prompt}
           onPortLabel={(port, screen) =>
@@ -886,9 +1227,104 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         </div>
       )}
 
-      {wireHint && !labelMode && !placement && !prompt && !mergeConfirm && (
+      {/* Mode selector. The keyboard is the fast path (W, Esc) but a mode you
+          can't see is a mode you don't use, so it also reads as the current
+          state: exactly one segment is active at a time. Label mode is armed
+          from the palette (it carries which net to attach), so it appears here
+          only while active — as an indicator you can click to leave. */}
+      <div className="absolute left-3 top-3 flex overflow-hidden rounded-full bg-white p-[3px] shadow-island">
+        {[
+          {
+            key: "pan",
+            label: "Pan",
+            hotkey: "H",
+            hint: "drag to move the canvas (or hold space / middle-drag)",
+            Icon: IconHand,
+            active: panMode,
+            onPick: () => {
+              setWireMode(false);
+              if (labelMode) onLabelFinish();
+              if (placement) onPlacementFinish();
+              setPanMode(true);
+            },
+          },
+          {
+            key: "select",
+            label: "Select",
+            hotkey: "V",
+            hint: "click to select · drag to rubber-band · Esc also returns here",
+            Icon: IconCursor,
+            active: !wireMode && !panMode && !labelMode && !placement,
+            onPick: () => {
+              setWireMode(false);
+              setPanMode(false);
+              if (labelMode) onLabelFinish();
+              if (placement) onPlacementFinish();
+            },
+          },
+          {
+            key: "wire",
+            label: "Wire",
+            hotkey: "W",
+            hint: "click two pins",
+            Icon: IconCrosshair,
+            active: wireMode,
+            onPick: () => {
+              setPanMode(false);
+              if (labelMode) onLabelFinish();
+              if (placement) onPlacementFinish();
+              setWireMode(true);
+            },
+          },
+          ...(labelMode
+            ? [
+                {
+                  key: "label",
+                  label: labelMode.label,
+                  hotkey: "Esc",
+                  hint: "click a pin to attach; Esc to finish",
+                  Icon: IconTag,
+                  active: true,
+                  onPick: () => onLabelFinish(),
+                },
+              ]
+            : []),
+        ].map(({ key, label, hotkey, hint, Icon, active, onPick }) => (
+          <button
+            key={key}
+            type="button"
+            title={`${label} (${hotkey}) — ${hint}`}
+            aria-keyshortcuts={hotkey}
+            aria-pressed={active}
+            onClick={onPick}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium transition-colors ${
+              active ? "bg-ink text-white" : "text-ink/60 hover:bg-ink/5"
+            }`}
+          >
+            <Icon size={13} />
+            {label}
+            {/* The shortcut rides along visibly — a tooltip nobody hovers is
+                not discoverability. */}
+            <kbd
+              className={`rounded border px-1 font-mono text-[9px] leading-[14px] ${
+                active ? "border-white/25 text-white/70" : "border-ink/15 text-ink/40"
+              }`}
+            >
+              {hotkey}
+            </kbd>
+          </button>
+        ))}
+      </div>
+
+      {wireMode && !prompt && (
         <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-white px-3.5 py-[5px] text-[11px] font-medium text-ink/70 shadow-island">
-          drag pin to pin to wire
+          wire · click two pins · Esc done
+        </div>
+      )}
+
+      {wireHint && !wireMode && !labelMode && !placement && !prompt && !mergeConfirm && (
+        <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-white px-3.5 py-[5px] text-[11px] font-medium text-ink/70 shadow-island">
+          press <span className="font-bold">W</span> to wire
         </div>
       )}
 
@@ -970,6 +1406,16 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         />
       )}
 
+      {/* Selection + diagnostic highlighting. Deliberately NOT the viewer's
+          `css` prop: that string is baked into the generated SVG, and the
+          viewer's generation memo does not list `css` as a dependency, so
+          highlights simply never appeared unless some other change happened to
+          regenerate the SVG at the same moment. A plain stylesheet applies to
+          the SVG the viewer already rendered — instant, and it never triggers a
+          regeneration (which is also what keeps clicking around from flashing
+          the board). */}
+      <style>{highlightCss}</style>
+
       <ProvisionalLayer
         parts={provisionals}
         wrapRef={wrapRef}
@@ -1028,10 +1474,21 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
 
       {toast && (
         <div
-          className="absolute bottom-10 left-1/2 flex max-w-[75%] -translate-x-1/2 items-center gap-2 rounded-full bg-white py-[4px] pl-3.5 pr-1.5 text-[11px] font-medium text-ink/80 shadow-island"
-          title={toast.fe.detail}
+          className="absolute bottom-10 left-1/2 flex max-w-[75%] -translate-x-1/2 cursor-copy items-center gap-2 rounded-full bg-white py-[4px] pl-3.5 pr-1.5 text-[11px] font-medium text-ink/80 shadow-island"
+          title={`${toast.fe.detail ?? toast.fe.message}\n\nClick to copy`}
+          role="button"
+          tabIndex={0}
+          onClick={() => copyToast()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              copyToast();
+            }
+          }}
         >
-          <span className="truncate">{toast.fe.message}</span>
+          {/* Errors are the thing you most want to paste somewhere — into the
+              chat, an issue, a search. The whole pill is the copy affordance. */}
+          <span className="truncate">{copiedToast ? "Copied to clipboard" : toast.fe.message}</span>
           {toast.fe.kind === "stale" && toast.retry && (
             <Button
               variant="copper"

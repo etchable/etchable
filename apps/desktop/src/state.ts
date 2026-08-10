@@ -27,6 +27,21 @@ const NO_DIAGS: Diag[] = [];
 
 export function useEtchable() {
   const [source, setSource] = useState<string | null>(null);
+  /**
+   * Keep one spelling of the board path. `build-started` sends the absolute
+   * path while `build-finished` sends it root-stripped (BuildView.source), so
+   * naively storing both makes `source` flip on every build — which remounts
+   * the canvas viewer (its React key) and flickers the titlebar. Same file,
+   * same state: whoever names it first wins until the board actually changes.
+   */
+  const setSourceStable = (next: string | null) =>
+    setSource((prev) => {
+      if (prev === next || next === null) return prev ?? next;
+      if (prev === null) return next;
+      const same =
+        prev === next || prev.endsWith(`/${next}`) || next.endsWith(`/${prev}`);
+      return same ? prev : next;
+    });
   const [build, setBuild] = useState<BuildView | null>(null);
   const [lastGood, setLastGood] = useState<BuildView | null>(null);
   const [building, setBuilding] = useState(false);
@@ -95,7 +110,7 @@ export function useEtchable() {
     invoke<BackendState>("get_state")
       .then((s) => {
         if (disposed) return;
-        setSource(s.source);
+        setSourceStable(s.source);
         setSelectionState(s.selection?.paths ?? []);
         // Deliberately NOT hydrating agentRunning: the snapshot's flag means
         // "a session exists", not "a turn is in flight". A remounting UI has
@@ -134,7 +149,7 @@ export function useEtchable() {
 
     track(
       listen<BuildStartedPayload>("build-started", (e) => {
-        setSource(e.payload.source);
+        setSourceStable(e.payload.source);
         setBuilding(true);
         setBoardError(null);
       }),
@@ -149,7 +164,7 @@ export function useEtchable() {
     track(
       listen<BuildView>("build-finished", (e) => {
         setBuilding(false);
-        setSource(e.payload.source);
+        setSourceStable(e.payload.source);
         acceptBuild(e.payload);
       }),
     );
@@ -265,6 +280,13 @@ export function useEtchable() {
 
   // Attach a pin to a net (the label/rail gesture, phase 2). The backend
   // resolves the anchor call site from editability; throws with the reason.
+  const disconnectPin = useCallback(
+    async (instancePath: string, pin: string, baseHash: string) => {
+      await invoke("disconnect_pin", { instancePath, pin, baseHash });
+    },
+    [],
+  );
+
   const attachPinNet = useCallback(
     async (
       instancePath: string,
@@ -468,6 +490,7 @@ export function useEtchable() {
     addInstance,
     warmPlacement,
     attachPinNet,
+    disconnectPin,
     renameNet,
     connectPins,
     setAttribute,

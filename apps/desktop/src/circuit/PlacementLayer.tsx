@@ -11,9 +11,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@etchable/ui";
 import { readCamera } from "./camera";
 import { humanizeError } from "./errors";
+import { SNAP } from "./grid";
 import type { BuildView, PlacementArm } from "../types";
-
-const SNAP = 0.25; // schematic units
 
 type PlacementLayerProps = {
   view: BuildView;

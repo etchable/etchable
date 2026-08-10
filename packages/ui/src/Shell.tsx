@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -35,6 +36,9 @@ export interface ShellProps {
   titlebar?: ReactNode;
   leftSidebar?: ReactNode;
   rightSidebar?: ReactNode;
+  /** Imperative handle, so hosts can reveal a panel they need the user to see
+   * (e.g. clicking an error opens the chat with a prompt waiting). */
+  shellApiRef?: React.MutableRefObject<ShellApi | null>;
   /** Native macOS overlay traffic lights: spans the titlebar over the left
       sidebar column and reserves room for the lights, so the collapse
       button rides the sidebar's edge. */
@@ -101,11 +105,17 @@ function makeSide(enabled: boolean, min: number, initial: number): SideModel {
   };
 }
 
+export interface ShellApi {
+  /** Open the right sidebar if it is closed; no-op when already open. */
+  openRight(): void;
+}
+
 export function Shell({
   children,
   titlebar,
   leftSidebar,
   rightSidebar,
+  shellApiRef,
   macTrafficLights = false,
   leftMinWidth = 132,
   rightMinWidth = 132,
@@ -326,6 +336,22 @@ export function Shell({
     }, 250);
     commit();
   };
+
+  // Imperative handle: reveal the right panel without toggling it shut when
+  // it is already open (toggleSide alone would hide it).
+  useEffect(() => {
+    if (!shellApiRef) return;
+    shellApiRef.current = {
+      openRight() {
+        if (!hasRight) return;
+        if (m.right.width >= m.right.min) return;
+        toggleSide(m.right, m.left);
+      },
+    };
+    return () => {
+      shellApiRef.current = null;
+    };
+  });
 
   /** Titlebar button: close an open sidebar, or reopen it — inline when it
       fits, as an overlay above the content when it doesn't. */

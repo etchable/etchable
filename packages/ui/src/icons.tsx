@@ -5,10 +5,13 @@ import {
   Check,
   CornersOut,
   Crosshair,
+  Cursor,
+  Hand,
   Minus,
   Plus,
   SidebarSimple,
   SquaresFour,
+  Tag,
   Stop,
   Warning,
   X,
@@ -36,3 +39,6 @@ export const IconSidebarSimple = chrome(SidebarSimple);
 export const IconSquaresFour = chrome(SquaresFour);
 export const IconWarning = chrome(Warning);
 export const IconCrosshair = chrome(Crosshair);
+export const IconCursor = chrome(Cursor);
+export const IconHand = chrome(Hand);
+export const IconTag = chrome(Tag);

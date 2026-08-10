@@ -93,6 +93,7 @@ export default function Palette(props: PaletteProps) {
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>({ kind: "idle" });
   const listRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   // The hit whose install form is expanded, plus its editable name.
   const [installing, setInstalling] = useState<{
     hit: LcscSearchHit;
@@ -159,6 +160,27 @@ export default function Palette(props: PaletteProps) {
     }
   };
 
+  // `A` focuses the library filter — KiCad's add-symbol reflex. Bound here so
+  // the palette owns its own shortcut, and ignored while typing anywhere.
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key !== "a" && e.key !== "A") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement;
+      if (
+        el instanceof HTMLElement &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      filterRef.current?.focus();
+      filterRef.current?.select();
+    };
+    window.addEventListener("keydown", down);
+    return () => window.removeEventListener("keydown", down);
+  }, []);
+
   // Arrow keys walk the armable items; Enter clicks the focused one.
   const onListKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -199,6 +221,7 @@ export default function Palette(props: PaletteProps) {
     >
       <div className="px-2 pt-2">
         <input
+          ref={filterRef}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="filter library…"

@@ -4,7 +4,7 @@ export { Input, type InputProps, type InputVariant, type InputSize } from "./Inp
 export { Chip } from "./Chip";
 export { Panel } from "./Panel";
 export { SelectionBox } from "./SelectionBox";
-export { Shell, type ShellProps } from "./Shell";
+export { Shell, type ShellApi, type ShellProps } from "./Shell";
 export { Cursor } from "./Cursor";
 export {
   IconCheck,
@@ -12,10 +12,13 @@ export {
   IconChevronRight,
   IconCornersOut,
   IconCrosshair,
+  IconCursor,
+  IconHand,
   IconMinus,
   IconPlus,
   IconSidebarSimple,
   IconSquaresFour,
+  IconTag,
   IconStop,
   IconWarning,
   IconX,

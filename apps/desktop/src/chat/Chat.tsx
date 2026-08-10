@@ -1,4 +1,5 @@
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { useEffect, useRef } from "react";
 import {
   IconCheck,
   IconChevronDown,
@@ -30,6 +31,10 @@ type ChatProps = {
   transcript: ChatItem[];
   agentRunning: boolean;
   selection: string[];
+  /** Text to place in the composer WITHOUT sending — clicking an error hands
+   * the user a prompt they can edit or discard. Bumping `seq` re-applies the
+   * same text. */
+  draft?: { text: string; seq: number } | null;
   sessionInfo: SessionInfo | null;
   /** Resumable sessions for this workspace (newest first). */
   sessions: SessionSummary[];
@@ -51,13 +56,22 @@ function SelectionChip({
 }) {
   if (selection.length === 0) return null;
   const joined = selection.join(", ");
-  const preview = joined.length > 48 ? joined.slice(0, 48) + "…" : joined;
+  // Every selected path IS sent as context; the chip used to truncate the list
+  // mid-way, which read as "only some of these went in". Name what fits, then
+  // account for the rest explicitly, and keep the full list on hover.
+  const short = selection.map((p) => p.replace(/^root\./, ""));
+  let shown = short.length;
+  while (shown > 1 && short.slice(0, shown).join(", ").length > 44) shown -= 1;
+  const preview =
+    shown === short.length
+      ? short.join(", ")
+      : `${short.slice(0, shown).join(", ")} +${short.length - shown} more`;
   return (
     <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-sky/40 bg-sky/10 px-2.5 py-1 text-xxs">
       <span className="flex flex-none text-sky">
         <IconCrosshair size={12} />
       </span>
-      <span className="min-w-0 flex-1 truncate">
+      <span className="min-w-0 flex-1 truncate" title={joined}>
         {selection.length} selected — included as context
         <span className="font-mono text-[10px] text-ink/55"> · {preview}</span>
       </span>
@@ -160,6 +174,34 @@ function SessionControls({
   );
 }
 
+/**
+ * Puts `draft` into the composer, focused and unsent, so the user can edit or
+ * discard it.
+ *
+ * Writes to the textarea through React's native value setter and a synthetic
+ * `input` event rather than an assistant-ui API: the vendored version (0.15.11)
+ * exposes no composer `setText` in its typings, and going through the DOM the
+ * way a real keystroke does keeps this working across upgrades.
+ */
+function ComposerDraft({ draft }: { draft?: { text: string; seq: number } | null }) {
+  const applied = useRef<number | null>(null);
+  useEffect(() => {
+    if (!draft || applied.current === draft.seq) return;
+    const input = document.querySelector<HTMLTextAreaElement>("textarea.aui-composer-input");
+    if (!input) return; // composer not mounted yet; a later draft will land
+    applied.current = draft.seq;
+    const setValue = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    setValue?.call(input, draft.text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    input.setSelectionRange(draft.text.length, draft.text.length);
+  }, [draft]);
+  return null;
+}
+
 export default function Chat(props: ChatProps) {
   const runtime = useChatRuntime({
     transcript: props.transcript,
@@ -181,6 +223,7 @@ export default function Chat(props: ChatProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ComposerDraft draft={props.draft} />
       <Thread
         suggestions={SUGGESTIONS}
         header={
