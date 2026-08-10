@@ -674,16 +674,55 @@ pub fn attach_pin_net(
     // The same fallback-aware resolution as every other wiring door — a
     // provisional part (root.NAME, unknown to a red build) resolves to its
     // top-level name in the entry file.
-    let (file, ep) = wire_endpoint(&state, &instance_path, &pin)?;
-    let (source, root, stdlib) = state.canvas.read(|s| {
+    let (mut file, mut ep) = wire_endpoint(&state, &instance_path, &pin)?;
+    let (source, root, stdlib, sch) = state.canvas.read(|s| {
         (
             s.source.clone(),
             s.workspace_root.clone(),
             s.stdlib_dir.clone().unwrap_or_default(),
+            s.build.as_ref().and_then(|b| b.schematic.clone()),
         )
     });
     let source = source.ok_or("no board open")?;
     let root = root.ok_or("no workspace open")?;
+
+    // Labelling a pin that lives INSIDE a module goes through that module's
+    // port, exactly as the wire gesture does (connect_pins). Without this the
+    // endpoint resolved to the wrapper file, where an installed part's inner
+    // pin belongs to a `Component(...)` rather than a module call — the writer
+    // then failed with "<part> is not instantiated through a Module binding",
+    // which named the wrapper's component and explained nothing about the
+    // board-level fix.
+    let entry_rel = source
+        .strip_prefix(&root)
+        .unwrap_or(&source)
+        .display()
+        .to_string();
+    if file != entry_rel {
+        let translated = sch
+            .as_ref()
+            .map(|s| {
+                zen_build::translate_endpoint_via_port(s, &source, &root, &instance_path, &pin)
+            })
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .flatten();
+        match translated {
+            Some(t) => {
+                file = entry_rel.clone();
+                ep = t;
+            }
+            None => {
+                let module = instance_path.split('.').nth(1).unwrap_or("the module");
+                return Err(format!(
+                    "couldn't reach that pin from the board: its net isn't carried by any \
+                     port on {module}'s call site — either {module} doesn't expose it as an \
+                     io(), or the call site passes it as a computed value the canvas won't \
+                     guess at. Ask the agent to wire it, or wire it inside the module"
+                ));
+            }
+        }
+    }
     let target = root.join(file);
     let req = zen_build::AttachPinRequest {
         instance: ep.instance,
@@ -845,9 +884,16 @@ pub fn connect_pins(
                 .nth(1)
                 .or_else(|| b_path.split('.').nth(1))
                 .unwrap_or("the module");
+            // Two different situations reach here and the old copy only named
+            // one: the port may not exist at all, OR it exists but the call
+            // site passes something we can't resolve to a net (a computed
+            // value like `POOL[0]`). Naming both keeps the message honest —
+            // see crates/zen-build/tests/port_translation.rs for what resolves.
             return Err(format!(
-                "that pin's net stays inside {module} and isn't exposed as a port — ask \
-                 the agent to expose it (add an io), or wire it inside the module"
+                "couldn't reach that pin from the board: its net isn't carried by any \
+                 port on {module}'s call site — either {module} doesn't expose it as an \
+                 io(), or the call site passes it as a computed value the canvas won't \
+                 guess at. Ask the agent to wire it, or wire it inside the module"
             ));
         }
     }

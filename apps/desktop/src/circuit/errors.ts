@@ -26,10 +26,12 @@ export function humanizeError(raw: unknown): FriendlyError {
     message = "Nothing to undo.";
   } else if (has(/nothing to redo/i)) {
     message = "Nothing to redo.";
-  } else if (has(/different module scopes|stays inside .* and isn't exposed/i)) {
+  } else if (
+    has(/different module scopes|stays inside .* and isn't exposed|couldn't reach that pin/i)
+  ) {
     message =
-      "That pin's net lives inside its module and isn't exposed as a port — ask the agent " +
-      "to expose it, or wire it inside the module.";
+      "Couldn't reach that pin from the board — its net isn't carried by a port on the " +
+      "module's call site. Ask the agent to wire it, or wire it inside the module.";
     kind = "refusal";
   } else if (has(/already unconnected/i)) {
     message = "That pin isn't connected to anything.";

@@ -138,8 +138,13 @@ struct NetDef {
     stmt: (usize, usize),
     /// Byte span of the variable identifier on the LHS.
     ident_span: (usize, usize),
-    /// Byte span of the name string literal, quotes included.
+    /// Byte span of the name string literal, quotes included. Meaningless when
+    /// `named` is false — there is no literal to point at.
     string_span: (usize, usize),
+    /// Did the source spell the name out (`Net("SW")`), or is it implied by the
+    /// variable (`SW = Net()`)? Only literal-rewriting code needs to care;
+    /// everything else should treat the two alike.
+    named: bool,
 }
 
 /// One authored file's top-level shape, parsed once.
@@ -151,6 +156,12 @@ struct FileIndex {
     module_bindings: Vec<ModuleBinding>,
     /// Top-level `IDENT = Callee("name", …)` assignments.
     net_defs: Vec<NetDef>,
+    /// Nets declared without a name literal — `SW = Net()`. The evaluator names
+    /// such a net after its variable, so these are ordinary nets that merely
+    /// spell their name implicitly. Kept in their own vec so the one place that
+    /// rewrites a name literal can't touch them by accident; everything else
+    /// should go through `nets()` / `net_by_name()` and see both.
+    unnamed_nets: Vec<NetDef>,
     /// Every name bound at top level (assignments, loads, defs) — the
     /// collision set for new variables.
     bound_idents: std::collections::BTreeSet<String>,
@@ -163,6 +174,31 @@ struct FileIndex {
     docstring_end: Option<usize>,
     /// Parse/read failure, verbatim — everything in the file refuses with it.
     error: Option<String>,
+}
+
+impl FileIndex {
+    /// Every net this file declares, named or not — the single answer to "what
+    /// nets exist here, and what is each called".
+    ///
+    /// Naming in this language is optional (`SW = Net()` is a net named SW),
+    /// which mirrors how an EDA schematic works: connectivity is the fact and
+    /// the name is derived, with unlabeled nets auto-named rather than absent.
+    /// Callers that scanned `net_defs` directly saw only the half that spells
+    /// its name out, and each one grew its own wrong-looking failure — a
+    /// refused wire, a bogus "that name is taken". Ask here instead.
+    fn nets(&self) -> impl Iterator<Item = &NetDef> {
+        // Named first: if a file somehow declares both spellings of one name,
+        // the one with a literal is the one a rewriter can act on.
+        self.net_defs.iter().chain(self.unnamed_nets.iter())
+    }
+
+    fn net_by_name(&self, name: &str) -> Option<&NetDef> {
+        self.nets().find(|d| d.name == name)
+    }
+
+    fn net_by_variable(&self, variable: &str) -> Option<&NetDef> {
+        self.nets().find(|d| d.variable == variable)
+    }
 }
 
 /// Files the canvas may write: workspace-relative, outside the materialized
@@ -339,6 +375,37 @@ fn index_content(rel: &str, content: &str) -> FileIndex {
                         .or_default()
                         .push(site);
                 }
+                // `SW = Net()` — a net whose name the evaluator derives from
+                // the variable. Nothing here can be renamed in place (there is
+                // no literal), but the net still EXISTS and must be resolvable.
+                if first_string.is_none()
+                    && matches!(callee_ident.node.ident.as_str(), "Net" | "Power" | "Ground")
+                {
+                    index.unnamed_nets.push(NetDef {
+                        variable: ident.node.ident.clone(),
+                        callee: callee_ident.node.ident.clone(),
+                        // The evaluator derives the net's name from the variable.
+                        name: ident.node.ident.clone(),
+                        line,
+                        stmt: span,
+                        ident_span: (
+                            assign.lhs.span.begin().get() as usize,
+                            assign.lhs.span.end().get() as usize,
+                        ),
+                        // No literal exists, so point at where one would go:
+                        // just inside `Net(` … `)`. An empty span makes the
+                        // rename path's "replace the literal" edit an INSERT,
+                        // which is what naming an unnamed net actually is.
+                        string_span: {
+                            let rhs_end = assign.rhs.span.end().get() as usize;
+                            let insert_at = content[..rhs_end]
+                                .rfind(')')
+                                .unwrap_or(rhs_end.saturating_sub(1));
+                            (insert_at, insert_at)
+                        },
+                        named: false,
+                    });
+                }
                 // `LED_A = Net("LED_A")` / `VCC = Power("VCC_3V3")` — a
                 // net-shaped assignment.
                 if let Some(lit) = first_string {
@@ -353,6 +420,7 @@ fn index_content(rel: &str, content: &str) -> FileIndex {
                             assign.lhs.span.end().get() as usize,
                         ),
                         string_span: literal_span(lit),
+                        named: true,
                     });
                 }
             }
@@ -511,9 +579,13 @@ pub fn analyze_editability(sch: &SchematicDoc, workspace_root: &Path) -> Editabi
     }
 
     for (name, net) in &sch.nets {
+        // Both spellings count: a wire on `SW = Net()` is as editable as one on
+        // `SW = Net("SW")`. Missing the unnamed half marked those nets
+        // non-editable, which quietly disabled the gestures that check this map
+        // (delete a wire, rename a net) with no error to explain why.
         let defs: Vec<(&str, &NetDef)> = indexes
             .iter()
-            .flat_map(|(file, idx)| idx.net_defs.iter().map(move |d| (*file, d)))
+            .flat_map(|(file, idx)| idx.nets().map(move |d| (*file, d)))
             .filter(|(_, d)| d.name == *name && d.callee == net.kind)
             .collect();
         let entry = match defs.as_slice() {
@@ -1794,7 +1866,7 @@ pub fn create_net(
     if let Some(e) = &index.error {
         bail!("{e}");
     }
-    if let Some(d) = index.net_defs.iter().find(|d| d.name == name) {
+    if let Some(d) = index.net_by_name(name) {
         bail!("a net named {name:?} is already defined at {rel}:{}", d.line);
     }
     let variable = net_variable(name);
@@ -1857,13 +1929,13 @@ pub fn rename_net(
     if let Some(e) = &index.error {
         bail!("{e}");
     }
-    let defs: Vec<&NetDef> = index.net_defs.iter().filter(|d| d.name == old).collect();
+    let defs: Vec<&NetDef> = index.nets().filter(|d| d.name == old).collect();
     let def = match defs.as_slice() {
         [d] => *d,
         [] => bail!("no top-level net definition for {old:?} in {rel}"),
         many => bail!("ambiguous: {} definitions of {old:?} in {rel}", many.len()),
     };
-    if index.net_defs.iter().any(|d| d.name == new) {
+    if index.net_by_name(new).is_some() {
         bail!("a net named {new:?} already exists in {rel}");
     }
     let old_var = def.variable.clone();
@@ -1879,11 +1951,18 @@ pub fn rename_net(
         );
     }
 
-    let mut edits = vec![TextEdit {
-        start: def.string_span.0,
-        end: def.string_span.1,
-        text: format!("{new:?}"),
-    }];
+    // An unnamed net (`SW = Net()`) takes its name FROM its variable, so
+    // renaming it is renaming the variable — there is no literal to edit. A new
+    // name that isn't a legal identifier is the exception: then the name has to
+    // be spelled out, and the empty span recorded above inserts it.
+    let mut edits = Vec::new();
+    if def.named || net_variable(new) != new {
+        edits.push(TextEdit {
+            start: def.string_span.0,
+            end: def.string_span.1,
+            text: format!("{new:?}"),
+        });
+    }
     let refs = ident_ref_spans(&ast, &old_var);
     let references = refs.len();
     if new_var != old_var {
@@ -2041,8 +2120,12 @@ pub fn attach_pin_net(
     };
 
     // The net: reuse an existing definition (typed or not), else create.
-    let existing_def = index.net_defs.iter().find(|d| d.name == req.net_name);
-    let (variable, created_def) = match existing_def {
+    // An UNNAMED net counts as existing: `GND = Ground()` is the net named GND
+    // (the evaluator names it after its variable). Missing that, this tried to
+    // create a second `GND` and bailed with "already bound — pick another net
+    // name", which read as a naming problem when the net was simply already
+    // there. Same blind spot the port lookup had; see port_for_net.
+    let (variable, created_def) = match index.net_by_name(&req.net_name) {
         Some(d) => (d.variable.clone(), false),
         None => {
             let variable = net_variable(&req.net_name);
@@ -2098,7 +2181,7 @@ pub fn attach_pin_net(
     let mut pruned_defs = Vec::new();
     if let Some(old_var) = old_ident {
         if old_var != variable {
-            if let Some(old_def) = index.net_defs.iter().find(|d| d.variable == old_var) {
+            if let Some(old_def) = index.net_by_variable(&old_var) {
                 let ast = parse(&rel, &content)?;
                 if ident_ref_spans(&ast, &old_var).len() == 1 {
                     let mut start = line_boundary_before(&content, old_def.stmt.0);
@@ -2257,7 +2340,7 @@ fn resolve_endpoint<'a>(
         None => PinState::Unbound,
         Some(kwarg) => {
             if let Some(var) = &kwarg.value_ident {
-                match index.net_defs.iter().find(|d| &d.variable == var) {
+                match index.net_by_variable(var) {
                     Some(def) => PinState::Def {
                         variable: var.clone(),
                         name: def.name.clone(),
@@ -2317,6 +2400,14 @@ pub fn port_for_net(
         }
         if let Some((_, literal)) = &kwarg.value_net_literal {
             if literal == net_name {
+                return Ok(Some(kwarg.name.clone()));
+            }
+        }
+        // `U5(GPIO12=SW)` where `SW = Net()`: the net carries the variable's own
+        // name, so the kwarg reaches it. Resolved through the shared layer so
+        // named and unnamed nets behave the same here.
+        if let Some(var) = &kwarg.value_ident {
+            if index.net_by_variable(var).is_some_and(|d| d.name == net_name) {
                 return Ok(Some(kwarg.name.clone()));
             }
         }
@@ -2551,7 +2642,7 @@ pub fn connect_pins(
             if !valid_instance_name(&name) {
                 bail!("invalid net name {name:?} (want [A-Za-z][A-Za-z0-9_-]*, max 64)");
             }
-            match index.net_defs.iter().find(|d| d.name == name) {
+            match index.net_by_name(&name) {
                 Some(d) => (d.name.clone(), d.variable.clone(), false),
                 None => {
                     let variable = net_variable(&name);
@@ -2612,7 +2703,7 @@ pub fn connect_pins(
         if old_var == &target_var {
             continue;
         }
-        let Some(def) = index.net_defs.iter().find(|d| &d.variable == old_var) else {
+        let Some(def) = index.net_by_variable(old_var) else {
             continue;
         };
         if ident_ref_spans(&ast, old_var).len() == *replaced {
@@ -2909,7 +3000,7 @@ pub fn remove_instances(
     let inside = |s: (usize, usize)| spans.iter().any(|d| s.0 >= d.0 && s.1 <= d.1);
 
     let mut edits: Vec<TextEdit> = Vec::new();
-    let mut delete_stmt = |content: &str, stmt: (usize, usize)| {
+    let delete_stmt = |content: &str, stmt: (usize, usize)| {
         let mut start = line_boundary_before(content, stmt.0);
         if content[..start].ends_with("\n\n") {
             start -= 1;
