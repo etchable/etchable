@@ -19,16 +19,17 @@ esac
 perl -pi -e "s/\"version\": \"\Q$current\E\"/\"version\": \"$version\"/" \
   apps/desktop/package.json \
   apps/desktop/src-tauri/tauri.conf.json
-perl -pi -e "s/^version = \"\Q$current\E\"/version = \"$version\"/" \
-  apps/desktop/src-tauri/Cargo.toml
+# The crates inherit `version.workspace = true`, so the one Rust pin is in the
+# root manifest — and the lockfile it feeds is the root one.
+perl -pi -e "s/^version = \"\Q$current\E\"/version = \"$version\"/" Cargo.toml
 
 # Sync the lockfile to the new workspace version without touching dependencies.
-cargo update --workspace --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo update --workspace
 
 git add apps/desktop/package.json \
   apps/desktop/src-tauri/tauri.conf.json \
-  apps/desktop/src-tauri/Cargo.toml \
-  apps/desktop/src-tauri/Cargo.lock
+  Cargo.toml \
+  Cargo.lock
 git commit -m "release v$version"
 
 echo "$version"
