@@ -944,6 +944,85 @@ mod tests {
     }
 
     #[test]
+    fn authored_positions_collapse_single_component_wrappers() {
+        // Every stdlib generic is a module wrapping one component, so a board
+        // whose positions are all authored (what the first save-all writes)
+        // must still collapse those wrappers. Boxing them nests a dashed box
+        // per passive inside its parent and, when the wrapper's top edge
+        // coincides with the parent's, puts both titles at the same point.
+        let mut instances = BTreeMap::new();
+        let module = |path: &str, kids: &[(&str, &str)]| InstanceDoc {
+            path: path.into(),
+            kind: InstanceKind::Module,
+            type_name: "m".into(),
+            source_file: None,
+            refdes: None,
+            attributes: BTreeMap::new(),
+            children: kids
+                .iter()
+                .map(|(n, p)| (n.to_string(), p.to_string()))
+                .collect(),
+            pins: vec![],
+            position: None,
+        };
+        instances.insert(
+            "root".to_string(),
+            module("root", &[("W", "root.W"), ("M", "root.M")]),
+        );
+        // root.W wraps a single component (collapses); root.M holds two (keeps
+        // its box).
+        instances.insert("root.W".into(), module("root.W", &[("R", "root.W.R")]));
+        instances.insert("root.W.R".into(), resistor("root.W.R", "R1", [None, None]));
+        instances.insert(
+            "root.M".into(),
+            module("root.M", &[("RA", "root.M.RA"), ("RB", "root.M.RB")]),
+        );
+        instances.insert("root.M.RA".into(), resistor("root.M.RA", "R2", [None, None]));
+        instances.insert("root.M.RB".into(), resistor("root.M.RB", "R3", [None, None]));
+
+        let mut out = BuildOutput {
+            source: "test.zen".into(),
+            schematic: Some(SchematicDoc {
+                root_module: "m".into(),
+                instances,
+                nets: BTreeMap::new(),
+                by_refdes: BTreeMap::new(),
+            }),
+            diagnostics: vec![],
+            editability: None,
+        };
+        let sch = out.schematic.as_mut().unwrap();
+        for (i, inst) in sch
+            .instances
+            .values_mut()
+            .filter(|i| i.kind == InstanceKind::Component)
+            .enumerate()
+        {
+            inst.position = Some(PositionDoc {
+                x: 25.4 * (i as f64 + 1.0),
+                y: 50.8 * (i as f64 + 1.0),
+                rotation: 0.0,
+                mirror: None,
+            });
+        }
+
+        let doc = to_circuit_json(&out);
+        let titles: Vec<&str> = doc
+            .elements
+            .iter()
+            .filter(|e| e["type"] == json!("schematic_text"))
+            .filter_map(|e| e["text"].as_str())
+            .collect();
+        assert_eq!(titles, vec!["M"], "only the multi-component module is boxed");
+        let boxes = doc
+            .elements
+            .iter()
+            .filter(|e| e["type"] == json!("schematic_box"))
+            .count();
+        assert_eq!(boxes, 1, "one box per drawn module");
+    }
+
+    #[test]
     fn horz_only_bases_resolve_via_axis_fallback() {
         let (name, _) = resolve_variant("zener_diode", Orient::Right).unwrap();
         assert_eq!(name, "zener_diode_horz");

@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 
 use crate::circuit_json::{classify, resolve_glyph, Orient, ResolvedGlyph, NET_LABEL_OFFSET};
-use crate::text_metrics::{net_label_len, NET_LABEL_HEIGHT};
+use crate::text_metrics::net_label_len;
 use crate::model::{InstanceDoc, InstanceKind, PinDoc, SchematicDoc};
 use crate::route::ROUTE_MAX_PORTS;
 
@@ -412,6 +412,164 @@ const DIVIDER_GAP: f64 = 0.55;
 /// Row gap inside the decoupler bank beyond the label clearances.
 const BANK_GAP: f64 = 0.35;
 
+/// One module child as the rail-idiom partition sees it. Deliberately carries
+/// no geometry: both layout paths build these the same way, so the derived
+/// packer and the authored branch reach identical conclusions about which
+/// passive serves which pin.
+pub(crate) struct RailKid {
+    path: String,
+    role: RailRole,
+    pins: Vec<PinDoc>,
+}
+
+/// Which passives attach to which partner, which pull-up/pull-down pairs fuse
+/// into a divider, which are decouplers, and what stays in the flow. Indices
+/// are into the `RailKid` slice it was computed from.
+struct RailPartition {
+    /// rail kid -> partner kid
+    attached_to: BTreeMap<usize, usize>,
+    /// pull-up -> pull-down (dividers)
+    fused: BTreeMap<usize, usize>,
+    /// decouplers
+    bank: Vec<usize>,
+    flow_kids: Vec<usize>,
+}
+
+/// Partner of a pull-up/down: a sibling touching its signal net. A Flow
+/// sibling is preferred (the passive attaches to it); a mutually-partnered
+/// pull-up/pull-down pair with no flow sibling is a voltage divider and
+/// fuses into one unit. Everything unresolved falls back into the flow.
+fn rail_partition(sch: &SchematicDoc, kids: &[RailKid]) -> RailPartition {
+    let owner = |path: &str| {
+        kids.iter()
+            .position(|k| path == k.path || path.starts_with(&format!("{}.", k.path)))
+    };
+    let sig_net = |i: usize| -> Option<String> {
+        signal_pin(sch, &kids[i].pins).and_then(|p| p.net.clone())
+    };
+    let flow_partner = |i: usize| -> Option<usize> {
+        let net = sig_net(i)?;
+        sch.nets.get(&net)?.ports.iter().find_map(|p| {
+            owner(&p.component).filter(|&k| k != i && kids[k].role == RailRole::Flow)
+        })
+    };
+    let rail_partner = |i: usize| -> Option<usize> {
+        let net = sig_net(i)?;
+        sch.nets.get(&net)?.ports.iter().find_map(|p| {
+            owner(&p.component)
+                .filter(|&k| k != i && matches!(kids[k].role, RailRole::PullUp | RailRole::PullDown))
+        })
+    };
+
+    let mut part = RailPartition {
+        attached_to: BTreeMap::new(),
+        fused: BTreeMap::new(),
+        bank: Vec::new(),
+        flow_kids: Vec::new(),
+    };
+    for i in 0..kids.len() {
+        match kids[i].role {
+            RailRole::Flow => part.flow_kids.push(i),
+            RailRole::Decoupler => part.bank.push(i),
+            RailRole::PullUp | RailRole::PullDown => {
+                if let Some(p) = flow_partner(i) {
+                    part.attached_to.insert(i, p);
+                } else {
+                    part.flow_kids.push(i); // may fuse below, else flows vertical
+                }
+            }
+        }
+    }
+    // Fuse divider pairs among the leftover rail kids.
+    let leftovers: Vec<usize> = part
+        .flow_kids
+        .iter()
+        .copied()
+        .filter(|&i| kids[i].role == RailRole::PullUp)
+        .collect();
+    for i in leftovers {
+        if let Some(j) = rail_partner(i) {
+            if kids[j].role == RailRole::PullDown
+                && part.flow_kids.contains(&j)
+                && !part.fused.contains_key(&i)
+                && !part.fused.values().any(|&v| v == j)
+            {
+                part.fused.insert(i, j);
+                part.flow_kids.retain(|&k| k != j);
+            }
+        }
+    }
+    part
+}
+
+/// Attachment wires implied by a partition: each rail passive couples to the
+/// pin it serves, and each fused divider joins its halves — even when the net
+/// as a whole keeps labels elsewhere (route.rs draws these as partial nets).
+/// Both layout paths must emit these or a save-all would drop the wire and let
+/// the suppressed labels back in.
+fn partition_stubs(sch: &SchematicDoc, kids: &[RailKid], part: &RailPartition) -> Vec<Stub> {
+    let own_signal_pin =
+        |i: usize| -> Option<String> { signal_pin(sch, &kids[i].pins).map(|p| p.name.clone()) };
+    let mut stubs: Vec<Stub> = Vec::new();
+    for (&i, &p) in &part.attached_to {
+        let (Some(net), Some(own)) = (
+            signal_pin(sch, &kids[i].pins).and_then(|p| p.net.clone()),
+            own_signal_pin(i),
+        ) else {
+            continue;
+        };
+        let under_partner =
+            |c: &str| c == kids[p].path || c.starts_with(&format!("{}.", kids[p].path));
+        if let Some(port) = sch.nets.get(&net).and_then(|nd| {
+            nd.ports
+                .iter()
+                .find(|port| port.component != kids[i].path && under_partner(&port.component))
+        }) {
+            stubs.push(Stub {
+                a: (kids[i].path.clone(), own),
+                b: (port.component.clone(), port.pin.clone()),
+            });
+        }
+    }
+    for (&u_kid, &d_kid) in &part.fused {
+        if let (Some(a), Some(b)) = (own_signal_pin(u_kid), own_signal_pin(d_kid)) {
+            stubs.push(Stub {
+                a: (kids[u_kid].path.clone(), a),
+                b: (kids[d_kid].path.clone(), b),
+            });
+        }
+    }
+    stubs
+}
+
+/// The rail kids of one module, resolved the way `size_node` resolves them:
+/// a wrapper module holding a single component collapses to that component,
+/// and a module with real contents is a Flow participant with no pins of its
+/// own. Used by the authored path, which has no `SizedNode` tree to read.
+fn rail_kids_of(sch: &SchematicDoc, inst: &InstanceDoc) -> Vec<RailKid> {
+    drawable_children(sch, inst)
+        .into_iter()
+        .map(|(_, child)| {
+            let collapsed = (child.kind == InstanceKind::Module)
+                .then(|| drawable_children(sch, child))
+                .filter(|kids| kids.len() == 1 && kids[0].1.kind == InstanceKind::Component)
+                .map(|kids| kids[0].1);
+            match collapsed.unwrap_or(child) {
+                c if c.kind == InstanceKind::Component => RailKid {
+                    path: c.path.clone(),
+                    role: rail_role(sch, c),
+                    pins: c.pins.clone(),
+                },
+                m => RailKid {
+                    path: m.path.clone(),
+                    role: RailRole::Flow,
+                    pins: Vec::new(),
+                },
+            }
+        })
+        .collect()
+}
+
 /// Column and row assignment for one module's children: longest-path
 /// layering over directed connectivity, then two barycenter sweeps, then a
 /// waterline pass that aligns connected pins so series wires run straight.
@@ -435,67 +593,26 @@ fn pack_by_connectivity(
     };
 
     // ---- rail-idiom partition ---------------------------------------------
-    // Partner of a pull-up/down: a sibling touching its signal net. A Flow
-    // sibling is preferred (the passive attaches to it); a mutually-partnered
-    // pull-up/pull-down pair with no flow sibling is a voltage divider and
-    // fuses into one unit. Everything unresolved falls back into the flow.
+    // Shared with the authored path (`rail_partition`) so both agree on which
+    // passive serves which pin; this path then packs geometry around it.
     let sig_net = |i: usize| -> Option<String> {
         signal_pin(sch, &node_pins(&kids[i]).into_iter().cloned().collect::<Vec<_>>())
             .and_then(|p| p.net.clone())
     };
-    let flow_partner = |i: usize| -> Option<usize> {
-        let net = sig_net(i)?;
-        sch.nets.get(&net)?.ports.iter().find_map(|p| {
-            owner(&p.component)
-                .filter(|&k| k != i && kids[k].role == RailRole::Flow)
-        })
-    };
-    let rail_partner = |i: usize| -> Option<usize> {
-        let net = sig_net(i)?;
-        sch.nets.get(&net)?.ports.iter().find_map(|p| {
-            owner(&p.component).filter(|&k| {
-                k != i
-                    && matches!(kids[k].role, RailRole::PullUp | RailRole::PullDown)
-            })
-        })
-    };
-
-    let mut attached_to: BTreeMap<usize, usize> = BTreeMap::new(); // rail kid -> partner kid
-    let mut fused: BTreeMap<usize, usize> = BTreeMap::new(); // pull-up -> pull-down (dividers)
-    let mut bank: Vec<usize> = Vec::new(); // decouplers
-    let mut flow_kids: Vec<usize> = Vec::new();
-
-    for i in 0..n {
-        match kids[i].role {
-            RailRole::Flow => flow_kids.push(i),
-            RailRole::Decoupler => bank.push(i),
-            RailRole::PullUp | RailRole::PullDown => {
-                if let Some(p) = flow_partner(i) {
-                    attached_to.insert(i, p);
-                } else {
-                    flow_kids.push(i); // may fuse below, else flows vertical
-                }
-            }
-        }
-    }
-    // Fuse divider pairs among the leftover rail kids.
-    let leftovers: Vec<usize> = flow_kids
+    let rail_kids: Vec<RailKid> = kids
         .iter()
-        .copied()
-        .filter(|&i| kids[i].role == RailRole::PullUp)
+        .map(|k| RailKid {
+            path: k.path.clone(),
+            role: k.role,
+            pins: node_pins(k).into_iter().cloned().collect(),
+        })
         .collect();
-    for i in leftovers {
-        if let Some(j) = rail_partner(i) {
-            if kids[j].role == RailRole::PullDown
-                && flow_kids.contains(&j)
-                && !fused.contains_key(&i)
-                && !fused.values().any(|&v| v == j)
-            {
-                fused.insert(i, j);
-                flow_kids.retain(|&k| k != j);
-            }
-        }
-    }
+    let RailPartition {
+        attached_to,
+        fused,
+        bank,
+        flow_kids,
+    } = rail_partition(sch, &rail_kids);
 
     // ---- units --------------------------------------------------------------
     let mut units: Vec<Unit> = Vec::new();
@@ -880,40 +997,17 @@ fn pack_by_connectivity(
         }
     }
 
-    // Attachment wires: each rail passive couples to the pin it serves,
-    // and each fused divider joins its halves — even when the net as a
-    // whole keeps labels elsewhere (route.rs draws these as partial nets).
-    let mut stubs: Vec<Stub> = Vec::new();
-    let own_signal_pin = |i: usize| -> Option<String> {
-        let pins: Vec<PinDoc> = node_pins(&kids[i]).into_iter().cloned().collect();
-        signal_pin(sch, &pins).map(|p| p.name.clone())
-    };
-    for (&i, &p) in &attached_to {
-        let (Some(net), Some(own)) = (sig_net(i), own_signal_pin(i)) else {
-            continue;
-        };
-        let under_partner = |c: &str| {
-            c == kids[p].path || c.starts_with(&format!("{}.", kids[p].path))
-        };
-        if let Some(port) = sch.nets.get(&net).and_then(|nd| {
-            nd.ports
-                .iter()
-                .find(|port| port.component != kids[i].path && under_partner(&port.component))
-        }) {
-            stubs.push(Stub {
-                a: (kids[i].path.clone(), own),
-                b: (port.component.clone(), port.pin.clone()),
-            });
-        }
-    }
-    for (&u_kid, &d_kid) in &fused {
-        if let (Some(a), Some(b)) = (own_signal_pin(u_kid), own_signal_pin(d_kid)) {
-            stubs.push(Stub {
-                a: (kids[u_kid].path.clone(), a),
-                b: (kids[d_kid].path.clone(), b),
-            });
-        }
-    }
+    // Attachment wires, from the same partition the authored path uses.
+    let stubs = partition_stubs(
+        sch,
+        &rail_kids,
+        &RailPartition {
+            attached_to: attached_to.clone(),
+            fused: fused.clone(),
+            bank: bank.clone(),
+            flow_kids: flow_kids.clone(),
+        },
+    );
 
     // Decoupler bank: a vertical stack beside the flow, each cap upright
     // with its rails labeled above and below.
@@ -1168,9 +1262,31 @@ pub(crate) fn compute_layout(sch: &SchematicDoc) -> Layout {
             };
             out.comps.insert(inst.path.clone(), layout);
         }
-        // Module boxes from descendant component bounds.
+        // Rail attachments are connectivity, not geometry: the same passive
+        // serves the same pin wherever the user dragged it. Without these the
+        // first save-all would drop every attachment wire and let the
+        // suppressed net labels back in.
+        for inst in sch.instances.values() {
+            if inst.kind != InstanceKind::Module {
+                continue;
+            }
+            let rail_kids = rail_kids_of(sch, inst);
+            let part = rail_partition(sch, &rail_kids);
+            out.stubs
+                .extend(partition_stubs(sch, &rail_kids, &part));
+        }
+        // Module boxes from descendant component bounds. The collapse rule
+        // from the derived path (see size_node) applies here too: a module
+        // wrapping a single component draws as that symbol, not as a dashed
+        // box around it. Without this, the first save-all turns every stdlib
+        // generic into its own box — and a wrapper whose top edge coincides
+        // with its parent's puts the two titles at identical coordinates.
         for inst in sch.instances.values() {
             if inst.kind != InstanceKind::Module || inst.path == "root" {
+                continue;
+            }
+            let kids = drawable_children(sch, inst);
+            if kids.len() == 1 && kids[0].1.kind == InstanceKind::Component {
                 continue;
             }
             let prefix = format!("{}.", inst.path);

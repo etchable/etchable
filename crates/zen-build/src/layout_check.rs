@@ -4,22 +4,29 @@
 //! catch the visual defects diagnostics can't express: symbols drawn on top
 //! of each other, wires cutting through symbol bodies (the router does no
 //! obstacle avoidance — see route.rs), and net labels colliding with
-//! neighbors. Label extents are EXACT: text_metrics mirrors the renderer's
-//! own per-glyph table and flag formula, so what this lint measures is
-//! what the canvas draws.
+//! neighbors, module boxes drawn over things they don't contain, and module
+//! titles landing on each other. Label extents are EXACT: text_metrics
+//! mirrors the renderer's own per-glyph table and flag formula, so what this
+//! lint measures is what the canvas draws. Module titles are the one
+//! approximation — see `title_box`.
 
 use std::collections::BTreeSet;
 
 use serde::Serialize;
 
 use crate::circuit_json::NET_LABEL_OFFSET;
-use crate::layout::{compute_layout, Layout, Side};
+use crate::layout::{compute_layout, last_segment, Layout, Side, MODULE_TITLE_H};
 use crate::model::SchematicDoc;
 use crate::route::route_nets;
 use crate::text_metrics::{net_label_len, NET_LABEL_HEIGHT};
 
 /// Slack inside exact label boxes so kissing flags don't report.
 const LABEL_MARGIN: f64 = 0.02;
+/// Per-character advance for module titles, the same figure the packer sizes
+/// title strips with (`size_node`). Titles have no generated metrics — they
+/// aren't net-label flags — so this is an estimate, kept tight (no padding)
+/// so it under-reports rather than crying wolf on long module names.
+const TITLE_ADVANCE: f64 = 0.12;
 /// Component boxes shrink by this margin for wire tests, so wires hugging a
 /// body edge (exit stubs, channel runs) don't count as "through" it.
 const WIRE_MARGIN: f64 = 0.05;
@@ -98,6 +105,13 @@ pub enum LayoutProblem {
         other_net: String,
         other_component: String,
     },
+    /// Two module boxes overlap without one nesting inside the other.
+    ModuleOverlap { a: String, b: String },
+    /// A module box is drawn across a symbol that isn't inside that module.
+    ModuleOverlapsComponent { module: String, component: String },
+    /// Two module titles are drawn on top of each other — what a box whose top
+    /// edge coincides with its parent's produces.
+    ModuleTitleCollision { a: String, b: String },
 }
 
 impl LayoutProblem {
@@ -114,6 +128,9 @@ impl LayoutProblem {
                 other_component,
                 ..
             } => vec![component, other_component],
+            LayoutProblem::ModuleOverlap { a, b } => vec![a, b],
+            LayoutProblem::ModuleOverlapsComponent { module, component } => vec![module, component],
+            LayoutProblem::ModuleTitleCollision { a, b } => vec![a, b],
         }
     }
 }
@@ -131,6 +148,17 @@ struct LabelBox {
     net: String,
     component: String,
     rect: Box2,
+}
+
+/// Where a module's title lands: centered on the box's title strip, exactly
+/// as `circuit_json` emits it. Width uses `TITLE_ADVANCE` since titles carry
+/// no generated metrics, so this catches gross collisions (two titles on the
+/// same point) without policing near-misses.
+fn title_box(path: &str, module: &Box2) -> Box2 {
+    let w = TITLE_ADVANCE * last_segment(path).chars().count() as f64;
+    let cx = (module.x0 + module.x1) / 2.0;
+    let cy = module.y0 + MODULE_TITLE_H / 2.0;
+    Box2::from_center((cx, cy), (w, MODULE_TITLE_H))
 }
 
 /// Lint the drawing, optionally scoped to an instance subtree. `scope` must
@@ -217,6 +245,66 @@ pub fn check_layout(sch: &SchematicDoc, scope: Option<&str>) -> LayoutReport {
                     component: la.component.clone(),
                     other_net: lb.net.clone(),
                     other_component: lb.component.clone(),
+                });
+            }
+        }
+    }
+
+    // Module boxes: nesting is legitimate (a child module sits inside its
+    // parent), overlap without nesting is not. A box drawn across a symbol
+    // that isn't one of its descendants is the same defect seen from the
+    // symbol's side. Titles are checked separately because two boxes sharing
+    // a top edge nest legally while their titles land on the same point.
+    let mods: Vec<(&String, Box2)> = layout
+        .modules
+        .iter()
+        .map(|(path, r)| {
+            (
+                path,
+                Box2 {
+                    x0: r.x,
+                    y0: r.y,
+                    x1: r.x + r.w,
+                    y1: r.y + r.h,
+                },
+            )
+        })
+        .collect();
+    let nests = |a: &Box2, b: &Box2| {
+        (a.x0 >= b.x0 - EPS && a.x1 <= b.x1 + EPS && a.y0 >= b.y0 - EPS && a.y1 <= b.y1 + EPS)
+            || (b.x0 >= a.x0 - EPS && b.x1 <= a.x1 + EPS && b.y0 >= a.y0 - EPS && b.y1 <= a.y1 + EPS)
+    };
+    for (i, (pa, ba)) in mods.iter().enumerate() {
+        for (pb, bb) in &mods[i + 1..] {
+            if ba.intersects(bb) && !nests(ba, bb) {
+                problems.push(LayoutProblem::ModuleOverlap {
+                    a: (*pa).clone(),
+                    b: (*pb).clone(),
+                });
+            }
+        }
+        for (path, cb) in &boxes {
+            let inside = path.len() > pa.len()
+                && path.starts_with(pa.as_str())
+                && path.as_bytes()[pa.len()] == b'.';
+            if !inside && ba.intersects(cb) {
+                problems.push(LayoutProblem::ModuleOverlapsComponent {
+                    module: (*pa).clone(),
+                    component: (*path).clone(),
+                });
+            }
+        }
+    }
+    let titles: Vec<(&String, Box2)> = mods
+        .iter()
+        .map(|(path, b)| (*path, title_box(path, b)))
+        .collect();
+    for (i, (pa, ta)) in titles.iter().enumerate() {
+        for (pb, tb) in &titles[i + 1..] {
+            if ta.shrink(LABEL_MARGIN).intersects(&tb.shrink(LABEL_MARGIN)) {
+                problems.push(LayoutProblem::ModuleTitleCollision {
+                    a: (*pa).clone(),
+                    b: (*pb).clone(),
                 });
             }
         }
@@ -630,6 +718,105 @@ mod tests {
         assert!(!b.crossed_by((-1.0, 2.0), (2.0, 2.0)));
         // Vertical through.
         assert!(b.crossed_by((0.5, -1.0), (0.5, 2.0)));
+    }
+
+    /// Two sibling modules of two components each, positions authored (in
+    /// `# pcb:sch` space) so the packer's separation no longer applies.
+    fn two_module_board(m1: &[(f64, f64)], m2: &[(f64, f64)]) -> SchematicDoc {
+        let mut instances = BTreeMap::new();
+        let module = |path: &str, kids: Vec<(String, String)>| InstanceDoc {
+            path: path.into(),
+            kind: InstanceKind::Module,
+            type_name: "m".into(),
+            source_file: None,
+            refdes: None,
+            attributes: BTreeMap::new(),
+            children: kids.into_iter().collect(),
+            pins: vec![],
+            position: None,
+        };
+        instances.insert(
+            "root".to_string(),
+            module(
+                "root",
+                vec![
+                    ("M1".into(), "root.M1".into()),
+                    ("M2".into(), "root.M2".into()),
+                ],
+            ),
+        );
+        for (m, comps) in [("M1", m1), ("M2", m2)] {
+            let kids: Vec<(String, String)> = (0..comps.len())
+                .map(|i| (format!("C{i}"), format!("root.{m}.C{i}")))
+                .collect();
+            instances.insert(format!("root.{m}"), module(&format!("root.{m}"), kids));
+            for (i, pos) in comps.iter().enumerate() {
+                let path = format!("root.{m}.C{i}");
+                let (_, mut inst) = resistor(&path, &format!("{m}R{i}"), [None, None]);
+                inst.position = Some(crate::model::PositionDoc {
+                    x: pos.0,
+                    y: pos.1,
+                    rotation: 0.0,
+                    mirror: None,
+                });
+                instances.insert(path, inst);
+            }
+        }
+        SchematicDoc {
+            root_module: "m".into(),
+            instances,
+            nets: BTreeMap::new(),
+            by_refdes: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn interleaved_module_boxes_report() {
+        // M1 spans x 0..2, M2 spans x 1..3: the boxes overlap and neither
+        // nests, and each is drawn across the other's symbols.
+        let sch = two_module_board(&[(0.0, 0.0), (50.8, 0.0)], &[(25.4, 0.0), (76.2, 0.0)]);
+        let problems = check_layout(&sch, None).problems;
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, LayoutProblem::ModuleOverlap { .. })),
+            "expected overlapping module boxes: {problems:?}"
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, LayoutProblem::ModuleOverlapsComponent { .. })),
+            "expected a box over a foreign symbol: {problems:?}"
+        );
+    }
+
+    #[test]
+    fn coincident_module_titles_report() {
+        // Identical bounds: the boxes nest legally (so no ModuleOverlap), but
+        // both titles land on the same point — the defect check_layout used to
+        // miss entirely.
+        let sch = two_module_board(&[(0.0, 0.0), (25.4, 0.0)], &[(0.0, 0.0), (25.4, 0.0)]);
+        let problems = check_layout(&sch, None).problems;
+        assert!(
+            problems
+                .iter()
+                .any(|p| matches!(p, LayoutProblem::ModuleTitleCollision { .. })),
+            "expected colliding module titles: {problems:?}"
+        );
+    }
+
+    /// Nesting is legitimate: a real child module inside its parent must not
+    /// report, or every hierarchical board would be a false positive.
+    #[test]
+    fn nested_module_boxes_are_clean() {
+        let sch = board(&[("A", (0.0, 0.0)), ("B", (50.8, 0.0))]);
+        let problems = check_layout(&sch, None).problems;
+        assert!(
+            !problems
+                .iter()
+                .any(|p| matches!(p, LayoutProblem::ModuleOverlap { .. })),
+            "flat board reported module overlap: {problems:?}"
+        );
     }
 
     #[test]

@@ -171,7 +171,9 @@ until the errors are fixed.
 - After finishing a module or section: `check_layout` — it is cheap (pure
   geometry, no rendering) and catches what diagnostics can't see:
   overlapping symbols, wires passing through symbol bodies, colliding net
-  labels. Scope it to what you just touched and fix problems before
+  labels, module boxes drawn across symbols they don't contain, and module
+  titles landing on each other. Scope it to what you just touched and fix
+  problems before
   moving on: read the centers from `get_circuit_json`, move components
   with one batched `set_positions` call, then re-run `check_layout`.
 - Placing something new (or fixing an overlap): `find_empty_space` returns

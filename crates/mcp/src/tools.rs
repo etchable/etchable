@@ -151,7 +151,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "check_layout",
-            description: "Structural lint of the rendered schematic — the cheap verification tier (pure geometry, no screenshot): overlapping symbols, wires passing through symbol bodies, colliding net labels. Run it after finishing a module or section, scoped to what you just touched, and fix problems before moving on.",
+            description: "Structural lint of the rendered schematic — the cheap verification tier (pure geometry, no screenshot): overlapping symbols, wires passing through symbol bodies, colliding net labels, module boxes drawn over things they don't contain, and module titles landing on each other. Run it after finishing a module or section, scoped to what you just touched, and fix problems before moving on.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
