@@ -497,6 +497,11 @@ const UserMessage: FC = () => {
     PRIMITIVES on purpose — a fresh object from a useAuiState selector is an
     unstable getSnapshot and loops React into "maximum update depth". */
 const SystemMessage: FC = () => {
+  // One selector per value, each returning a PRIMITIVE. `useAuiState` is a
+  // useSyncExternalStore selector, so returning a fresh object literal makes
+  // every snapshot compare unequal — React re-renders forever ("the result of
+  // getSnapshot should be cached", then "Maximum update depth exceeded"). Any
+  // system notice hit it: a session error, an interrupt, or resuming a session.
   const text = useAuiState((s) => {
     const part = s.message.content[0];
     return part?.type === "text" ? part.text : "";
