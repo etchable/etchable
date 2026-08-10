@@ -153,8 +153,8 @@ async function main() {
     await ab("eval", "(()=>{window.__repro.key('w'); return 1;})()");
     check("W arms the wire tool", (await modes()).some((m) => m.startsWith("WireW:true")));
     check("wire mode shows a crosshair", (await evalJson("getComputedStyle(document.querySelector('.dotgrid')).cursor")) === "crosshair");
-    await ab("eval", "(()=>{window.__repro.key('v'); return 1;})()");
-    check("V returns to select", (await modes()).some((m) => m.startsWith("SelectV:true")));
+    await ab("eval", "(()=>{window.__repro.key('Escape'); return 1;})()");
+    check("Esc returns to select", (await modes()).some((m) => m.startsWith("SelectEsc:true")));
     check("select mode does not look like pan", (await evalJson("getComputedStyle(document.querySelector('.dotgrid')).cursor")) === "default");
     await ab("eval", "(()=>{window.__repro.key('h'); return 1;})()");
     check("H arms the hand tool", (await modes()).some((m) => m.startsWith("PanH:true")));

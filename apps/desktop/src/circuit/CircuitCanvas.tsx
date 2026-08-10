@@ -687,16 +687,17 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
         setWireMode((on) => !on);
         return;
       }
-      if (e.key === "v" || e.key === "V") {
-        setWireMode(false);
-        setPanMode(false);
-        return;
-      }
+      // H is the hand tool — the same key Figma, Photoshop and Illustrator use.
+      // KiCad has no pan hotkey (it pans on a middle/right drag), so nothing
+      // electrical is displaced by borrowing it.
       if (e.key === "h" || e.key === "H") {
         setWireMode(false);
         setPanMode((on) => !on);
         return;
       }
+      // Select has no letter: Figma's V is `Edit value` in KiCad, and editing a
+      // part's value matters more here than a second way to reach the default
+      // tool. Esc is KiCad's own "cancel the tool and return to selection".
       if (e.key === "Escape" && panModeRef.current) {
         setPanMode(false);
         return;
@@ -731,7 +732,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
       } else if (e.key === "f" || e.key === "0" || e.key === "Home") {
         // Home is the KiCad reflex for zoom-to-fit; f/0 stay as they were.
         cameraRef.current?.fit();
-      } else if (e.key === "e" || e.key === "E") {
+      } else if (["e", "E", "v", "V"].includes(e.key)) {
         // Edit the one thing being acted on; ambiguous for a multi-selection.
         const targets = actionTargets();
         if (targets.length !== 1) return;
@@ -1238,7 +1239,7 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
             key: "pan",
             label: "Pan",
             hotkey: "H",
-            hint: "drag to move the canvas (or hold space / middle-drag)",
+            hint: "drag to move the canvas — or hold space, or middle-drag, any time",
             Icon: IconHand,
             active: panMode,
             onPick: () => {
@@ -1251,8 +1252,8 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
           {
             key: "select",
             label: "Select",
-            hotkey: "V",
-            hint: "click to select · drag to rubber-band · Esc also returns here",
+            hotkey: "Esc",
+            hint: "click to select · drag to rubber-band",
             Icon: IconCursor,
             active: !wireMode && !panMode && !labelMode && !placement,
             onPick: () => {
@@ -1293,8 +1294,8 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
           <button
             key={key}
             type="button"
-            title={`${label} (${hotkey}) — ${hint}`}
-            aria-keyshortcuts={hotkey}
+            title={hotkey ? `${label} (${hotkey}) — ${hint}` : `${label} — ${hint}`}
+            aria-keyshortcuts={hotkey ?? undefined}
             aria-pressed={active}
             onClick={onPick}
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-[3px] text-[11px] font-medium transition-colors ${
@@ -1304,14 +1305,16 @@ export default function CircuitCanvas(props: CircuitCanvasProps) {
             <Icon size={13} />
             {label}
             {/* The shortcut rides along visibly — a tooltip nobody hovers is
-                not discoverability. */}
-            <kbd
-              className={`rounded border px-1 font-mono text-[9px] leading-[14px] ${
-                active ? "border-white/25 text-white/70" : "border-ink/15 text-ink/40"
-              }`}
-            >
-              {hotkey}
-            </kbd>
+                not discoverability. Tools reached only by pointer show none. */}
+            {hotkey && (
+              <kbd
+                className={`rounded border px-1 font-mono text-[9px] leading-[14px] ${
+                  active ? "border-white/25 text-white/70" : "border-ink/15 text-ink/40"
+                }`}
+              >
+                {hotkey}
+              </kbd>
+            )}
           </button>
         ))}
       </div>
